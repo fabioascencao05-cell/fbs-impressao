@@ -47,48 +47,71 @@ export default function AprovacaoPage({ params }: { params: { id: string } }) {
       })
   }, [params.id])
 
-  /* WebSocket */
+  /* WebSocket (com proteção mixed content) */
   useEffect(() => {
     if (isDone) return
 
     const base = process.env.NEXT_PUBLIC_VPS_WS_URL || 'ws://147.15.11.61:8000'
-    const ws   = new WebSocket(`${base}/ws/process/${params.id}`)
-    setWsStatus('connecting')
+    let ws: WebSocket | null = null
 
-    ws.onopen  = () => { setWsStatus('open'); setStatusMsg('🟢 Conectado — aguardando pipeline…') }
-    ws.onerror = () => setStatusMsg('⚠️ WS indisponível. Usando Realtime como fallback…')
-    ws.onclose = () => setWsStatus('closed')
+    // Detecta mixed content: página HTTPS + WS inseguro = browser bloqueia.
+    // Construtor lança SecurityError síncrono → quebra a página. Pula antes.
+    const pageIsHttps  = typeof window !== 'undefined' && window.location.protocol === 'https:'
+    const wsIsInsecure = base.startsWith('ws://')
 
-    ws.onmessage = (ev) => {
-      let data: WsEvent
-      try { data = JSON.parse(ev.data) } catch { return }
-      setEventos(prev => [...prev, data])
+    if (pageIsHttps && wsIsInsecure) {
+      setWsStatus('closed')
+      setStatusMsg('🟡 Streaming ao vivo indisponível (HTTPS→WS bloqueado). Usando Realtime…')
+    } else {
+      try {
+        ws = new WebSocket(`${base}/ws/process/${params.id}`)
+        setWsStatus('connecting')
 
-      if (data.type === 'start')    { setStatusMsg(data.message); setPercent(2) }
-      if (data.type === 'progress') { setStatusMsg(data.message); setPercent(data.percent) }
-      if (data.type === 'preview')  { setLiveImage(`data:image/jpeg;base64,${data.image}`); setStatusMsg(data.label) }
-      if (data.type === 'layer') {
-        const src = `data:image/jpeg;base64,${data.image}`
-        setLiveImage(src)
-        setLayers(prev => [...prev, { image: src, label: data.label, color: data.color }])
-        setStatusMsg(data.label)
-        setPercent(Math.round((data.index / data.total) * 50 + 40))
+        ws.onopen  = () => { setWsStatus('open'); setStatusMsg('🟢 Conectado — aguardando pipeline…') }
+        ws.onerror = () => setStatusMsg('⚠️ WS falhou. Usando Realtime como fallback…')
+        ws.onclose = () => setWsStatus('closed')
+
+        ws.onmessage = (ev) => {
+          let data: WsEvent
+          try { data = JSON.parse(ev.data) } catch { return }
+          setEventos(prev => [...prev, data])
+
+          if (data.type === 'start')    { setStatusMsg(data.message); setPercent(2) }
+          if (data.type === 'progress') { setStatusMsg(data.message); setPercent(data.percent) }
+          if (data.type === 'preview')  { setLiveImage(`data:image/jpeg;base64,${data.image}`); setStatusMsg(data.label) }
+          if (data.type === 'layer') {
+            const src = `data:image/jpeg;base64,${data.image}`
+            setLiveImage(src)
+            setLayers(prev => [...prev, { image: src, label: data.label, color: data.color }])
+            setStatusMsg(data.label)
+            setPercent(Math.round((data.index / data.total) * 50 + 40))
+          }
+          if (data.type === 'done')  { setIsDone(true); setUrlFinal(data.url_final); setPercent(100); setStatusMsg(data.message); ws?.close() }
+          if (data.type === 'error') { setStatusMsg(`❌ ${data.message}`); setPercent(0); ws?.close() }
+        }
+      } catch (e) {
+        console.error('[WS] construtor falhou:', e)
+        setWsStatus('closed')
+        setStatusMsg('🟡 WS não pôde abrir. Aguardando atualização via Realtime…')
       }
-      if (data.type === 'done')  { setIsDone(true); setUrlFinal(data.url_final); setPercent(100); setStatusMsg(data.message); ws.close() }
-      if (data.type === 'error') { setStatusMsg(`❌ ${data.message}`); setPercent(0); ws.close() }
     }
 
-    /* Realtime fallback */
+    /* Realtime fallback — funciona sempre, com ou sem WS */
     const canal = supabase.channel(`live-${params.id}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'artes_processadas', filter: `id=eq.${params.id}` },
         ({ new: n }) => {
           if (n.status === 'Concluido' || n.status === 'Revisao_Manual') {
             setIsDone(true); setUrlFinal(n.url_final); setPercent(100)
-            setStatusMsg('✅ Concluído (Realtime).')
+            setStatusMsg('✅ Concluído (via Realtime).')
+          } else if (n.status === 'Erro' || n.status === 'Erro (Timeout)' || n.status === 'Cancelado') {
+            setStatusMsg(`❌ ${n.status}: ${n.erro_mensagem || 'sem detalhes'}`)
           }
         }).subscribe()
 
-    return () => { ws.close(); supabase.removeChannel(canal) }
+    return () => {
+      try { ws?.close() } catch {}
+      supabase.removeChannel(canal)
+    }
   }, [params.id, isDone])
 
   /* Auto-scroll log */
