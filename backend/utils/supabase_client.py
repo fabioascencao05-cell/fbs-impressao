@@ -21,6 +21,13 @@ def atualizar_status(arte_id: str, status: str):
     }).eq("id", arte_id).execute()
 
 
+def salvar_task_id(arte_id: str, celery_task_id: str):
+    """Persiste o task_id do Celery para permitir revogação posterior."""
+    supabase_client().table("artes_processadas").update({
+        "celery_task_id": celery_task_id, "atualizado_em": "now()"
+    }).eq("id", arte_id).execute()
+
+
 def fazer_upload(nome_arquivo: str, conteudo: bytes, content_type: str) -> str:
     """Faz upload no bucket-saida e retorna a URL pública."""
     bucket = os.getenv("BUCKET_SAIDA", "bucket-saida")

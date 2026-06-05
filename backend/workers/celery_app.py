@@ -16,8 +16,8 @@ celery.conf.update(
     accept_content=["json"],
     timezone="America/Sao_Paulo",
     enable_utc=True,
-    task_soft_time_limit=300,   # 5 min warn
-    task_time_limit=600,        # 10 min hard kill
+    task_soft_time_limit=180,   # 3 min warn → SoftTimeLimitExceeded
+    task_time_limit=200,        # 3m20s hard kill → SIGKILL
     worker_prefetch_multiplier=1,
     task_acks_late=True,
 )

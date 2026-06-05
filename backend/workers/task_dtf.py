@@ -12,11 +12,12 @@ import io, os, httpx
 from PIL import Image
 from rembg import remove
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 import replicate
 from dotenv import load_dotenv
 load_dotenv()
 
-from utils.supabase_client import supabase_client, atualizar_status, fazer_upload
+from utils.supabase_client import supabase_client, atualizar_status, fazer_upload, salvar_task_id
 from utils.ws_emit import emit, img_pil_to_b64
 
 REPLICATE_TOKEN = os.getenv("REPLICATE_API_TOKEN", "")
@@ -49,10 +50,12 @@ def _upscale_lanczos(img_bytes: bytes) -> bytes:
     return buf.getvalue()
 
 
-@shared_task(bind=True, name="task_dtf", max_retries=2)
+@shared_task(bind=True, name="task_dtf", max_retries=2,
+             soft_time_limit=180, time_limit=200)
 def processar_dtf(self, arte_id: str, url_original: str):
     try:
         atualizar_status(arte_id, "Processando")
+        salvar_task_id(arte_id, self.request.id)   # persiste task_id para cancelamento
         emit(arte_id, "start", message="⚙️ Iniciando pipeline DTF Alta Qualidade…")
 
         # 1. Download
@@ -122,6 +125,16 @@ def processar_dtf(self, arte_id: str, url_original: str):
 
         msg = "✅ PNG 300 DPI pronto!" if status == "Concluido" else "⚠️ Pronto — verificar fundo antes de produzir."
         emit(arte_id, "done", url_final=url_final, message=msg, score=score)
+
+    except SoftTimeLimitExceeded:
+        msg = "Timeout: DTF excedeu 3 minutos. Tente com imagem menor."
+        print(f"[dtf] TIMEOUT {arte_id}")
+        emit(arte_id, "error", message=f"⏱ {msg}")
+        try:
+            supabase_client().table("artes_processadas").update({
+                "status": "Erro (Timeout)", "erro_mensagem": msg,
+            }).eq("id", arte_id).execute()
+        except: pass
 
     except Exception as exc:
         print(f"[dtf] ERRO {arte_id}: {exc}")

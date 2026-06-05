@@ -19,10 +19,11 @@ import numpy as np
 from PIL import Image
 from sklearn.cluster import MiniBatchKMeans
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from dotenv import load_dotenv
 load_dotenv()
 
-from utils.supabase_client import supabase_client, atualizar_status, fazer_upload
+from utils.supabase_client import supabase_client, atualizar_status, fazer_upload, salvar_task_id
 from utils.ws_emit import emit, img_bgr_to_b64
 
 BUCKET_SAIDA = os.getenv("BUCKET_SAIDA", "bucket-saida")
@@ -103,11 +104,13 @@ def _camada_preview_b64(img_bgr: np.ndarray, mask: np.ndarray, cor_hex: str) -> 
     return img_bgr_to_b64(overlay, max_dim=400, quality=65)
 
 
-@shared_task(bind=True, name="task_silk", max_retries=2)
+@shared_task(bind=True, name="task_silk", max_retries=2,
+             soft_time_limit=180, time_limit=200)
 def processar_silk(self, arte_id: str, url_original: str, num_cores: int = 4,
                    blur_level: int = 3, turdsize: int = 2):
     try:
         atualizar_status(arte_id, "Processando")
+        salvar_task_id(arte_id, self.request.id)   # persiste task_id para cancelamento
         emit(arte_id, "start", message="⚙️ Iniciando pipeline Silk Screen…")
 
         # 1. Download
@@ -191,6 +194,16 @@ def processar_silk(self, arte_id: str, url_original: str, num_cores: int = 4,
         emit(arte_id, "done",
              url_final=url_final,
              message=f"✅ SVG pronto com {len(camadas)} camadas de cor!")
+
+    except SoftTimeLimitExceeded:
+        msg = "Timeout: Silk excedeu 3 minutos. Tente com imagem menor ou menos cores."
+        print(f"[silk] TIMEOUT {arte_id}")
+        emit(arte_id, "error", message=f"⏱ {msg}")
+        try:
+            supabase_client().table("artes_processadas").update({
+                "status": "Erro (Timeout)", "erro_mensagem": msg,
+            }).eq("id", arte_id).execute()
+        except: pass
 
     except Exception as exc:
         print(f"[silk] ERRO {arte_id}: {exc}")

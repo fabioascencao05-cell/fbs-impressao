@@ -9,17 +9,28 @@ type Arte = {
 }
 
 const STATUS_COR: Record<string, string> = {
-  Pendente: 'var(--warn)', Processando: 'var(--busy)',
-  Concluido: 'var(--ok)', Erro: 'var(--err)', Revisao_Manual: 'var(--review)',
+  Pendente:       'var(--warn)',
+  Processando:    'var(--busy)',
+  Concluido:      'var(--ok)',
+  Erro:           'var(--err)',
+  'Erro (Timeout)': 'var(--err)',
+  Revisao_Manual: 'var(--review)',
+  Cancelado:      'var(--paper-dim)',
 }
 const STATUS_LABEL: Record<string, string> = {
-  Pendente: 'NA FILA', Processando: 'PROCESSANDO',
-  Concluido: 'CONCLUÍDO', Erro: 'ERRO', Revisao_Manual: 'REVISÃO',
+  Pendente:       'NA FILA',
+  Processando:    'PROCESSANDO',
+  Concluido:      'CONCLUÍDO',
+  Erro:           'ERRO',
+  'Erro (Timeout)': 'TIMEOUT',
+  Revisao_Manual: 'REVISÃO',
+  Cancelado:      'CANCELADO',
 }
 
 export default function Dashboard() {
-  const [artes, setArtes] = useState<Arte[]>([])
+  const [artes, setArtes]         = useState<Arte[]>([])
   const [carregando, setCarregando] = useState(true)
+  const [cancelando, setCancelando] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     const carregar = async () => {
@@ -40,6 +51,26 @@ export default function Dashboard() {
   }, [])
 
   const ativos = artes.filter(a => a.status === 'Pendente' || a.status === 'Processando').length
+
+  const handleCancelar = async (arte: Arte) => {
+    if (!confirm(`Cancelar "${arte.nome_arquivo}"? A task será encerrada imediatamente.`)) return
+    setCancelando(prev => new Set(prev).add(arte.id))
+    try {
+      const resp = await fetch('/api/cancelar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arte_id: arte.id }),
+      })
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        alert(`Erro ao cancelar: ${err.erro || resp.status}`)
+      }
+    } catch {
+      alert('Erro de conexão ao cancelar.')
+    } finally {
+      setCancelando(prev => { const s = new Set(prev); s.delete(arte.id); return s })
+    }
+  }
 
   return (
     <>
@@ -93,13 +124,33 @@ export default function Dashboard() {
                   )}
                 </div>
                 <div className="job-right">
-                  <span className={`badge${arte.status === 'Processando' ? ' pulse' : ''}`} style={{ color: STATUS_COR[arte.status] || 'var(--paper-dim)' }}>
+                  <span className={`badge${arte.status === 'Processando' ? ' pulse' : ''}`}
+                    style={{ color: STATUS_COR[arte.status] || 'var(--paper-dim)' }}>
                     {STATUS_LABEL[arte.status] || arte.status}
                   </span>
-                  {/* Botão REVISAR para Silk concluída (slider) */}
+
+                  {/* Cancelar — visível apenas para Pendente e Processando */}
+                  {(arte.status === 'Processando' || arte.status === 'Pendente') && (
+                    <button
+                      onClick={() => handleCancelar(arte)}
+                      disabled={cancelando.has(arte.id)}
+                      style={{
+                        background: 'none', border: '1px solid var(--err)',
+                        borderRadius: 6, padding: '3px 10px',
+                        color: 'var(--err)', cursor: 'pointer',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontSize: '.65rem', fontWeight: 700, letterSpacing: '.06em',
+                        opacity: cancelando.has(arte.id) ? .4 : 1,
+                      }}>
+                      {cancelando.has(arte.id) ? '…' : '✕ CANCELAR'}
+                    </button>
+                  )}
+
+                  {/* Ajustar detalhe — Silk concluída */}
                   {arte.status === 'Concluido' && arte.metodo === 'Silk' && (
                     <a className="btn-approve" href={`/aprovacao/${arte.id}`}>AJUSTAR DETALHE ↗</a>
                   )}
+
                   {arte.url_final && (
                     <a className="dl" href={arte.url_final} download>BAIXAR ↓</a>
                   )}
