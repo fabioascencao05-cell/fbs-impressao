@@ -47,17 +47,37 @@ export async function POST(req: NextRequest) {
 
     // Fire-and-forget: dispara webhook para VPS SEM await
     // Vercel não bloqueia o response; VPS processa em background
+    // Logs detalhados para Vercel runtime — visíveis em "Logs" do dashboard
     if (vpsUrl && arte?.id) {
+      const payload = { id: arte.id, metodo, url_original, num_cores: num_cores || 4 }
+      console.log(`[WEBHOOK] Disparando para VPS: ${vpsUrl} | arte_id=${arte.id} | metodo=${metodo}`)
+
       fetch(vpsUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-webhook-secret': process.env.WEBHOOK_SECRET || '' },
-        body: JSON.stringify({ id: arte.id, metodo, url_original, num_cores: num_cores || 4 }),
-      }).catch(() => {/* ignora falha de conexão — VPS pode estar reiniciando */})
+        body: JSON.stringify(payload),
+      })
+        .then(async (response) => {
+          if (response.status >= 200 && response.status < 300) {
+            console.log(`[WEBHOOK] ✅ VPS aceitou arte_id=${arte.id} | status=${response.status}`)
+          } else {
+            const errText = await response.text().catch(() => '<sem corpo>')
+            console.error(`[WEBHOOK] ❌ VPS retornou status ${response.status} para arte_id=${arte.id}`)
+            console.error(`[WEBHOOK] Resposta da VPS: ${errText.substring(0, 500)}`)
+          }
+        })
+        .catch((erro) => {
+          console.error(`[WEBHOOK] ❌ Falha de conexão com VPS (${vpsUrl}) para arte_id=${arte.id}`)
+          console.error(`[WEBHOOK] Erro:`, erro?.message || erro, '| stack:', erro?.stack?.split('\n')[0])
+        })
+    } else if (!vpsUrl) {
+      console.warn(`[WEBHOOK] ⚠️ VPS_WEBHOOK_URL não configurada — arte_id=${arte?.id} ficou em Pendente`)
     }
 
     // Retorna 200 IMEDIATAMENTE, sem aguardar a VPS
     return NextResponse.json({ sucesso: true, arte_id: arte?.id ?? null })
   } catch (e: any) {
+    console.error(`[UPLOAD] Erro inesperado:`, e?.message, '| stack:', e?.stack?.split('\n').slice(0, 3).join(' '))
     return NextResponse.json({ erro: `Erro inesperado: ${e?.message}` }, { status: 500 })
   }
 }
