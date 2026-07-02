@@ -3,11 +3,15 @@ import { DISPLAY_PX_PER_CM } from '@/lib/constants'
 interface RulerProps {
   orientation: 'horizontal' | 'vertical'
   lengthCm: number
+  pxPerCm?: number
 }
 
-export default function Ruler({ orientation, lengthCm }: RulerProps) {
+export default function Ruler({ orientation, lengthCm, pxPerCm = DISPLAY_PX_PER_CM }: RulerProps) {
   const marks = Array.from({ length: Math.floor(lengthCm) + 1 }, (_, i) => i)
   const isHorizontal = orientation === 'horizontal'
+
+  // Thin out labels/ticks when zoomed far out so they don't collide.
+  const labelEvery = pxPerCm < 14 ? 10 : 5
 
   return (
     <div
@@ -18,8 +22,8 @@ export default function Ruler({ orientation, lengthCm }: RulerProps) {
       }
       style={
         isHorizontal
-          ? { width: lengthCm * DISPLAY_PX_PER_CM }
-          : { height: lengthCm * DISPLAY_PX_PER_CM }
+          ? { width: lengthCm * pxPerCm }
+          : { height: lengthCm * pxPerCm }
       }
     >
       {marks.map((cm) => (
@@ -28,12 +32,12 @@ export default function Ruler({ orientation, lengthCm }: RulerProps) {
           className="absolute text-muted-foreground"
           style={
             isHorizontal
-              ? { left: cm * DISPLAY_PX_PER_CM, top: 0 }
-              : { top: cm * DISPLAY_PX_PER_CM, left: 0 }
+              ? { left: cm * pxPerCm, top: 0 }
+              : { top: cm * pxPerCm, left: 0 }
           }
         >
           <div className={isHorizontal ? 'h-1.5 w-px bg-border' : 'h-px w-1.5 bg-border'} />
-          {cm % 5 === 0 && (
+          {cm % labelEvery === 0 && (
             <span
               className={
                 isHorizontal

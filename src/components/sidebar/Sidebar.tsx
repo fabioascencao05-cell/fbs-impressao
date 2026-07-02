@@ -10,6 +10,7 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { CANVAS_WIDTH_CM } from '@/lib/constants'
 import { downloadGangSheets } from '@/lib/exportCanvas'
 import { useAuth } from '@/hooks/useAuth'
+import { toast } from '@/hooks/use-toast'
 import { useState } from 'react'
 
 export default function Sidebar() {
@@ -27,6 +28,20 @@ export default function Sidebar() {
     setIsExporting(true)
     try {
       await downloadGangSheets(pages, maxHeightCm)
+      const pageCount = pages.filter((p) => p.items.length > 0).length
+      toast({
+        title: 'Exportação concluída',
+        description:
+          pageCount > 1
+            ? `${pageCount} páginas exportadas em .zip a 300 DPI.`
+            : 'Folha exportada em PNG a 300 DPI (fundo transparente).',
+      })
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Falha na exportação',
+        description: err instanceof Error ? err.message : 'Erro desconhecido.',
+      })
     } finally {
       setIsExporting(false)
     }

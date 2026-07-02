@@ -18,6 +18,7 @@ export interface PlacedItem {
   yCm: number
   widthCm: number
   heightCm: number
+  angle: number // rotation in degrees, around the top-left origin
 }
 
 export interface PackedPage {

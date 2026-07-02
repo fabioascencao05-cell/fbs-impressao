@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { UploadCloud } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
+import { toast } from '@/hooks/use-toast'
 
 export default function ImageUploadZone() {
   const addImages = useGangSheetStore((s) => s.addImages)
@@ -12,7 +13,21 @@ export default function ImageUploadZone() {
     (fileList: FileList | null) => {
       if (!fileList) return
       const files = Array.from(fileList)
-      void addImages(files)
+      void addImages(files).then(({ added, skipped }) => {
+        if (skipped > 0) {
+          toast({
+            variant: 'destructive',
+            title: 'Alguns arquivos foram ignorados',
+            description: `${skipped} arquivo(s) não são PNG. Apenas .PNG é aceito.`,
+          })
+        }
+        if (added > 0) {
+          toast({
+            title: 'Imagens adicionadas',
+            description: `${added} imagem(ns) na fila.`,
+          })
+        }
+      })
     },
     [addImages]
   )

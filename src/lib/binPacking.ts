@@ -85,6 +85,7 @@ export function packImages(images: GangImage[], maxHeightCm: number): PackedPage
       yCm: shelfY,
       widthCm: itemWidth,
       heightCm: unit.heightCm,
+      angle: 0,
     }
     currentPage.items.push(placed)
 

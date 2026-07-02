@@ -28,6 +28,9 @@ async function renderPageToBlob(page: PackedPage, maxHeightCm: number): Promise<
               img.set({
                 left: item.xCm * EXPORT_PX_PER_CM,
                 top: item.yCm * EXPORT_PX_PER_CM,
+                originX: 'left',
+                originY: 'top',
+                angle: item.angle ?? 0,
                 scaleX: targetWidthPx / (img.width ?? targetWidthPx),
                 scaleY: targetHeightPx / (img.height ?? targetHeightPx),
                 selectable: false,
