@@ -41,20 +41,6 @@ interface GangSheetState {
   reset: () => void
 }
 
-function clampToSheet(widthCm: number, heightCm: number, maxW: number, maxH: number) {
-  if (widthCm > maxW) {
-    const ratio = maxW / widthCm
-    widthCm = maxW
-    heightCm *= ratio
-  }
-  if (heightCm > maxH) {
-    const ratio = maxH / heightCm
-    heightCm = maxH
-    widthCm *= ratio
-  }
-  return { widthCm, heightCm }
-}
-
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
 }
@@ -74,16 +60,13 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     const skipped = files.length - accepted.length
     const newImages: GangImage[] = []
 
-    const { canvasWidthCm, maxHeightCm, itemGapCm } = get()
-    const maxW = Math.max(0.01, canvasWidthCm - itemGapCm)
-    const maxH = Math.max(0.01, maxHeightCm - itemGapCm)
-
     for (const file of accepted) {
       const box = await computeContentBox(file)
       const aspectRatio = box.heightPx / box.widthPx
-      let widthCm = box.widthPx / EXPORT_PX_PER_CM
-      let heightCm = widthCm * aspectRatio
-      ;({ widthCm, heightCm } = clampToSheet(widthCm, heightCm, maxW, maxH))
+      // Real-world size at print resolution — never altered/clamped, so the
+      // uploaded artwork keeps its exact measure regardless of sheet size.
+      const widthCm = box.widthPx / EXPORT_PX_PER_CM
+      const heightCm = widthCm * aspectRatio
       newImages.push({
         id: crypto.randomUUID(),
         file,

@@ -163,10 +163,6 @@ export function packImages(
 ): PackedPage[] {
   const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
 
-  // Guarantee every item can fit a fresh, empty page even after reserving its gap.
-  const usableW = Math.max(0.01, canvasWidthCm - itemGapCm)
-  const usableH = Math.max(0.01, maxHeightCm - itemGapCm)
-
   const buckets: PageBucket[] = []
 
   const openNewBucket = (): PageBucket => {
@@ -179,8 +175,8 @@ export function packImages(
   }
 
   for (const unit of units) {
-    const itemWidth = Math.min(unit.widthCm, usableW)
-    const itemHeight = Math.min(unit.heightCm, usableH)
+    const itemWidth = unit.widthCm
+    const itemHeight = unit.heightCm
     const occupiedWidth = itemWidth + itemGapCm
     const occupiedHeight = itemHeight + itemGapCm
 
