@@ -4,26 +4,50 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 4%;
+    --background: 210 40% 98%;
+    --foreground: 222 47% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 4%;
+    --card-foreground: 222 47% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 4%;
-    --primary: 240 6% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 6% 10%;
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
-    --accent: 240 5% 96%;
-    --accent-foreground: 240 6% 10%;
+    --popover-foreground: 222 47% 8%;
+    --primary: 199 89% 46%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 30% 94%;
+    --secondary-foreground: 222 47% 12%;
+    --muted: 210 30% 94%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 199 89% 94%;
+    --accent-foreground: 199 89% 24%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 240 6% 10%;
-    --radius: 0.5rem;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 199 89% 46%;
+    --radius: 0.6rem;
+    --grid-line: 222 20% 20% / 0.07;
+  }
+
+  .dark {
+    --background: 224 45% 6%;
+    --foreground: 210 40% 96%;
+    --card: 224 38% 10%;
+    --card-foreground: 210 40% 96%;
+    --popover: 224 38% 10%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 189 94% 55%;
+    --primary-foreground: 224 45% 6%;
+    --secondary: 224 30% 16%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 224 28% 15%;
+    --muted-foreground: 217 18% 65%;
+    --accent: 262 83% 65%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 224 25% 20%;
+    --input: 224 25% 20%;
+    --ring: 189 94% 55%;
+    --grid-line: 189 94% 70% / 0.08;
   }
 }
 
@@ -33,12 +57,30 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image: radial-gradient(circle at 15% 0%, hsl(var(--primary) / 0.08), transparent 45%);
+    background-attachment: fixed;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 }
 
 /* Canvas cm grid background, generated dynamically via inline style per-cm size */
 .gang-canvas-grid {
   background-image:
-    linear-gradient(to right, rgba(0, 0, 0, 0.08) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(0, 0, 0, 0.08) 1px, transparent 1px);
+    linear-gradient(to right, hsl(var(--grid-line)) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--grid-line)) 1px, transparent 1px);
+}
+
+/* Frosted-glass panel used for sidebar/toolbar surfaces. */
+.glass-panel {
+  background-color: hsl(var(--card) / 0.85);
+  backdrop-filter: blur(14px);
+}
+
+/* Subtle glow accent for primary calls-to-action. */
+.glow-primary {
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 0 24px -4px hsl(var(--primary) / 0.55);
+  transition: box-shadow 0.2s ease;
+}
+.glow-primary:hover {
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.6), 0 0 32px -2px hsl(var(--primary) / 0.7);
 }

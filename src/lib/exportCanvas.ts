@@ -1,10 +1,14 @@
 import * as fabric from 'fabric'
 import JSZip from 'jszip'
-import { CANVAS_WIDTH_CM, EXPORT_PX_PER_CM } from './constants'
+import { EXPORT_PX_PER_CM } from './constants'
 import type { PackedPage } from '@/types'
 
-async function renderPageToBlob(page: PackedPage, maxHeightCm: number): Promise<Blob> {
-  const widthPx = Math.round(CANVAS_WIDTH_CM * EXPORT_PX_PER_CM)
+async function renderPageToBlob(
+  page: PackedPage,
+  canvasWidthCm: number,
+  maxHeightCm: number
+): Promise<Blob> {
+  const widthPx = Math.round(canvasWidthCm * EXPORT_PX_PER_CM)
   const heightPx = Math.round(maxHeightCm * EXPORT_PX_PER_CM)
 
   const canvasEl = document.createElement('canvas')
@@ -59,19 +63,23 @@ async function renderPageToBlob(page: PackedPage, maxHeightCm: number): Promise<
  * transparent background and triggers a download. Multiple pages are
  * bundled into a single ZIP; a single page downloads directly as PNG.
  */
-export async function downloadGangSheets(pages: PackedPage[], maxHeightCm: number) {
+export async function downloadGangSheets(
+  pages: PackedPage[],
+  canvasWidthCm: number,
+  maxHeightCm: number
+) {
   const nonEmptyPages = pages.filter((p) => p.items.length > 0)
   if (nonEmptyPages.length === 0) return
 
   if (nonEmptyPages.length === 1) {
-    const blob = await renderPageToBlob(nonEmptyPages[0], maxHeightCm)
+    const blob = await renderPageToBlob(nonEmptyPages[0], canvasWidthCm, maxHeightCm)
     triggerDownload(blob, 'gang-sheet-dtf.png')
     return
   }
 
   const zip = new JSZip()
   for (const page of nonEmptyPages) {
-    const blob = await renderPageToBlob(page, maxHeightCm)
+    const blob = await renderPageToBlob(page, canvasWidthCm, maxHeightCm)
     zip.file(`gang-sheet-dtf-pagina-${page.index + 1}.png`, blob)
   }
   const zipBlob = await zip.generateAsync({ type: 'blob' })

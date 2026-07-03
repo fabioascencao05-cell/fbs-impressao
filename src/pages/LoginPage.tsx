@@ -3,19 +3,25 @@ import { ThemeSupa } from '@supabase/auth-ui-shared'
 import { Navigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/hooks/useAuth'
+import { useTheme } from '@/components/theme-provider'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { Layers } from 'lucide-react'
 
 export default function LoginPage() {
   const { session, loading } = useAuth()
+  const { theme } = useTheme()
 
   if (loading) return null
   if (session) return <Navigate to="/dashboard" replace />
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-muted/40 px-4">
+      <div className="absolute right-4 top-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm space-y-6">
         <div className="flex flex-col items-center gap-2 text-center">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="glow-primary flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Layers className="h-5 w-5" />
           </div>
           <h1 className="text-xl font-semibold">DTF Gang Sheet Builder</h1>
@@ -24,11 +30,11 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <div className="rounded-lg border bg-card p-6 shadow-sm">
+        <div className="glass-panel rounded-lg border p-6 shadow-sm">
           <Auth
             supabaseClient={supabase}
             appearance={{ theme: ThemeSupa }}
-            theme="light"
+            theme={theme}
             providers={[]}
             localization={{
               variables: {
