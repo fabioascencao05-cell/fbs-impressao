@@ -5,6 +5,7 @@ import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
   DEFAULT_MAX_HEIGHT_CM,
+  EXPORT_PX_PER_CM,
   ZOOM_MAX,
   ZOOM_MIN,
 } from '@/lib/constants'
@@ -35,7 +36,19 @@ interface GangSheetState {
   reset: () => void
 }
 
-const DEFAULT_WIDTH_CM = 10
+function clampToSheet(widthCm: number, heightCm: number, maxW: number, maxH: number) {
+  if (widthCm > maxW) {
+    const ratio = maxW / widthCm
+    widthCm = maxW
+    heightCm *= ratio
+  }
+  if (heightCm > maxH) {
+    const ratio = maxH / heightCm
+    heightCm = maxH
+    widthCm *= ratio
+  }
+  return { widthCm, heightCm }
+}
 
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
@@ -55,9 +68,16 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     const skipped = files.length - pngFiles.length
     const newImages: GangImage[] = []
 
+    const { canvasWidthCm, maxHeightCm, itemGapCm } = get()
+    const maxW = Math.max(0.01, canvasWidthCm - itemGapCm)
+    const maxH = Math.max(0.01, maxHeightCm - itemGapCm)
+
     for (const file of pngFiles) {
       const box = await computeContentBox(file)
       const aspectRatio = box.heightPx / box.widthPx
+      let widthCm = box.widthPx / EXPORT_PX_PER_CM
+      let heightCm = widthCm * aspectRatio
+      ;({ widthCm, heightCm } = clampToSheet(widthCm, heightCm, maxW, maxH))
       newImages.push({
         id: crypto.randomUUID(),
         file,
@@ -66,8 +86,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         naturalHeightPx: box.naturalHeightPx,
         aspectRatio,
         quantity: 1,
-        widthCm: DEFAULT_WIDTH_CM,
-        heightCm: DEFAULT_WIDTH_CM * aspectRatio,
+        widthCm,
+        heightCm,
         contentXPx: box.xPx,
         contentYPx: box.yPx,
         contentWidthPx: box.widthPx,
