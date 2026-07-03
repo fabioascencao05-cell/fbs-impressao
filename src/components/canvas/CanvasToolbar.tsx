@@ -3,7 +3,20 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from '@/lib/constants'
+import { useGangSheetStore } from '@/store/useGangSheetStore'
 import type { SelectionInfo } from './CanvasPage'
+
+const BG_PRESETS: { value: string; label: string; swatch: string }[] = [
+  { value: '#ffffff', label: 'Fundo branco', swatch: '#ffffff' },
+  { value: '#9ca3af', label: 'Fundo cinza', swatch: '#9ca3af' },
+  { value: '#18181b', label: 'Fundo preto', swatch: '#18181b' },
+  {
+    value: 'checkerboard',
+    label: 'Fundo xadrez (transparência)',
+    swatch:
+      'conic-gradient(#d4d4d8 0deg 90deg, #fff 90deg 180deg, #d4d4d8 180deg 270deg, #fff 270deg 360deg)',
+  },
+]
 
 interface CanvasToolbarProps {
   zoom: number
@@ -22,6 +35,9 @@ export default function CanvasToolbar({
   onDeleteSelected,
   onRegenerate,
 }: CanvasToolbarProps) {
+  const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
+  const setSheetBackgroundColor = useGangSheetStore((s) => s.setSheetBackgroundColor)
+
   return (
     <div className="glass-panel sticky top-0 z-10 flex items-center gap-2 border-b px-4 py-2">
       <div className="flex items-center gap-1">
@@ -57,6 +73,30 @@ export default function CanvasToolbar({
         >
           <Maximize className="h-4 w-4" />
         </Button>
+      </div>
+
+      <Separator orientation="vertical" className="h-6" />
+
+      <div className="flex items-center gap-1" title="Cor de fundo da folha (só visual, exportação continua transparente)">
+        {BG_PRESETS.map((preset) => (
+          <button
+            key={preset.value}
+            type="button"
+            title={preset.label}
+            onClick={() => setSheetBackgroundColor(preset.value)}
+            className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${
+              sheetBackgroundColor === preset.value ? 'border-primary' : 'border-border'
+            }`}
+            style={{ background: preset.swatch }}
+          />
+        ))}
+        <input
+          type="color"
+          value={sheetBackgroundColor.startsWith('#') ? sheetBackgroundColor : '#ffffff'}
+          onChange={(e) => setSheetBackgroundColor(e.target.value)}
+          title="Escolher outra cor de fundo"
+          className="h-6 w-6 cursor-pointer rounded-full border-2 border-border bg-transparent p-0"
+        />
       </div>
 
       <Separator orientation="vertical" className="h-6" />

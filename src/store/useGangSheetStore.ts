@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { packImages } from '@/lib/binPacking'
+import { computeContentBox } from '@/lib/trimImage'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
@@ -16,6 +17,7 @@ interface GangSheetState {
   itemGapCm: number
   pages: PackedPage[]
   zoom: number
+  sheetBackgroundColor: string
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -29,16 +31,8 @@ interface GangSheetState {
   removePlacedItem: (pageIndex: number, itemId: string) => void
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
+  setSheetBackgroundColor: (color: string) => void
   reset: () => void
-}
-
-function loadImageDimensions(file: File): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
-    img.onerror = reject
-    img.src = URL.createObjectURL(file)
-  })
 }
 
 const DEFAULT_WIDTH_CM = 10
@@ -54,6 +48,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   itemGapCm: DEFAULT_ITEM_GAP_CM,
   pages: [],
   zoom: 1,
+  sheetBackgroundColor: '#ffffff',
 
   addImages: async (files) => {
     const pngFiles = files.filter((f) => f.type === 'image/png')
@@ -61,18 +56,22 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     const newImages: GangImage[] = []
 
     for (const file of pngFiles) {
-      const { width, height } = await loadImageDimensions(file)
-      const aspectRatio = height / width
+      const box = await computeContentBox(file)
+      const aspectRatio = box.heightPx / box.widthPx
       newImages.push({
         id: crypto.randomUUID(),
         file,
         previewUrl: URL.createObjectURL(file),
-        naturalWidthPx: width,
-        naturalHeightPx: height,
+        naturalWidthPx: box.naturalWidthPx,
+        naturalHeightPx: box.naturalHeightPx,
         aspectRatio,
         quantity: 1,
         widthCm: DEFAULT_WIDTH_CM,
         heightCm: DEFAULT_WIDTH_CM * aspectRatio,
+        contentXPx: box.xPx,
+        contentYPx: box.yPx,
+        contentWidthPx: box.widthPx,
+        contentHeightPx: box.heightPx,
       })
     }
 
@@ -162,6 +161,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
+
+  setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
   reset: () => {
     set((state) => {

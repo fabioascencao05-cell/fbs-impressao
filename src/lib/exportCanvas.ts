@@ -27,16 +27,21 @@ async function renderPageToBlob(
         new Promise<void>((resolve, reject) => {
           fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' })
             .then((img) => {
-              const targetWidthPx = item.widthCm * EXPORT_PX_PER_CM
-              const targetHeightPx = item.heightCm * EXPORT_PX_PER_CM
+              // item.xCm/yCm/widthCm/heightCm describe the visible content box,
+              // not the whole (possibly padded) file — scale/position the full
+              // image so its content box lands exactly on that rect, matching
+              // the on-screen editor pixel for pixel.
+              const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
+              const left = item.xCm * EXPORT_PX_PER_CM - item.contentXPx * scale
+              const top = item.yCm * EXPORT_PX_PER_CM - item.contentYPx * scale
               img.set({
-                left: item.xCm * EXPORT_PX_PER_CM,
-                top: item.yCm * EXPORT_PX_PER_CM,
+                left,
+                top,
                 originX: 'left',
                 originY: 'top',
                 angle: item.angle ?? 0,
-                scaleX: targetWidthPx / (img.width ?? targetWidthPx),
-                scaleY: targetHeightPx / (img.height ?? targetHeightPx),
+                scaleX: scale,
+                scaleY: scale,
                 selectable: false,
               })
               staticCanvas.add(img)
