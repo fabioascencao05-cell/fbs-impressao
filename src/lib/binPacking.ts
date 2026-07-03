@@ -6,6 +6,12 @@ interface PackableUnit {
   previewUrl: string
   widthCm: number
   heightCm: number
+  contentXPx: number
+  contentYPx: number
+  contentWidthPx: number
+  contentHeightPx: number
+  naturalWidthPx: number
+  naturalHeightPx: number
 }
 
 interface FreeRect {
@@ -34,6 +40,12 @@ function expandQueue(images: GangImage[]): PackableUnit[] {
         previewUrl: img.previewUrl,
         widthCm: img.widthCm,
         heightCm: img.heightCm,
+        contentXPx: img.contentXPx,
+        contentYPx: img.contentYPx,
+        contentWidthPx: img.contentWidthPx,
+        contentHeightPx: img.contentHeightPx,
+        naturalWidthPx: img.naturalWidthPx,
+        naturalHeightPx: img.naturalHeightPx,
       })
     }
   }
@@ -195,6 +207,12 @@ export function packImages(
       widthCm: itemWidth,
       heightCm: itemHeight,
       angle: 0,
+      contentXPx: unit.contentXPx,
+      contentYPx: unit.contentYPx,
+      contentWidthPx: unit.contentWidthPx,
+      contentHeightPx: unit.contentHeightPx,
+      naturalWidthPx: unit.naturalWidthPx,
+      naturalHeightPx: unit.naturalHeightPx,
     })
 
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)

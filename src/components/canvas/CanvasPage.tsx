@@ -20,8 +20,22 @@ interface CanvasPageProps {
   onSelectionChange: (sel: SelectionInfo | null) => void
 }
 
-// Fabric objects carry the source PlacedItem id so edits map back to the store.
-type TaggedImage = fabric.FabricImage & { itemId?: string }
+interface ContentBox {
+  contentXPx: number
+  contentYPx: number
+  contentWidthPx: number
+  contentHeightPx: number
+}
+
+// Fabric objects carry the source PlacedItem id + its content bounding box
+// (in the original file's px space) so edits map back to the store using
+// the visible artwork's rect, not the full (possibly padded) image file.
+type TaggedImage = fabric.FabricImage & { itemId?: string; contentBox?: ContentBox }
+
+const BACKGROUND_PRESETS: Record<string, string> = {
+  checkerboard:
+    'conic-gradient(#e5e5e5 0deg 90deg, #ffffff 90deg 180deg, #e5e5e5 180deg 270deg, #ffffff 270deg 360deg)',
+}
 
 export default function CanvasPage({
   page,
@@ -34,6 +48,7 @@ export default function CanvasPage({
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
+  const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
 
   const widthPx = canvasWidthCm * pxPerCm
   const heightPx = maxHeightCm * pxPerCm
@@ -66,22 +81,40 @@ export default function CanvasPage({
 
     const pageIndex = page.index
 
+    // Content-box dims/position in cm, derived from the object's own scale —
+    // works whether the item just loaded or the user is mid-resize.
+    const contentRectCm = (obj: TaggedImage) => {
+      const box = obj.contentBox
+      if (!box) return null
+      const scaleX = obj.scaleX ?? 1
+      const scaleY = obj.scaleY ?? 1
+      return {
+        widthCm: (box.contentWidthPx * scaleX) / pxPerCm,
+        heightCm: (box.contentHeightPx * scaleY) / pxPerCm,
+        xCm: ((obj.left ?? 0) + box.contentXPx * scaleX) / pxPerCm,
+        yCm: ((obj.top ?? 0) + box.contentYPx * scaleY) / pxPerCm,
+      }
+    }
+
     const reportSelection = () => {
       const obj = canvas.getActiveObject() as TaggedImage | undefined
       if (!obj?.itemId) {
         onSelectionChange(null)
         return
       }
+      const rect = contentRectCm(obj)
       onSelectionChange({
         pageIndex,
         itemId: obj.itemId,
-        widthCm: obj.getScaledWidth() / pxPerCm,
-        heightCm: obj.getScaledHeight() / pxPerCm,
+        widthCm: rect?.widthCm ?? obj.getScaledWidth() / pxPerCm,
+        heightCm: rect?.heightCm ?? obj.getScaledHeight() / pxPerCm,
         angle: obj.angle ?? 0,
       })
     }
 
-    // Keep the (possibly rotated) bounding box inside the sheet.
+    // Keep the (possibly rotated) bounding box of the whole image — padding
+    // included — inside the sheet. Slightly conservative (won't let padding
+    // bleed past the edge), but simple and always safe.
     const clampToSheet = (obj: fabric.FabricObject) => {
       obj.setCoords()
       const br = obj.getBoundingRect()
@@ -112,11 +145,13 @@ export default function CanvasPage({
       const obj = e.target as TaggedImage | undefined
       if (!obj?.itemId) return
       clampToSheet(obj)
+      const rect = contentRectCm(obj)
+      if (!rect) return
       updatePlacedItem(pageIndex, obj.itemId, {
-        xCm: (obj.left ?? 0) / pxPerCm,
-        yCm: (obj.top ?? 0) / pxPerCm,
-        widthCm: obj.getScaledWidth() / pxPerCm,
-        heightCm: obj.getScaledHeight() / pxPerCm,
+        xCm: rect.xCm,
+        yCm: rect.yCm,
+        widthCm: rect.widthCm,
+        heightCm: rect.heightCm,
         angle: obj.angle ?? 0,
       })
     }
@@ -135,16 +170,20 @@ export default function CanvasPage({
     Promise.all(
       page.items.map((item) =>
         fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' }).then((img) => {
-          const targetWidthPx = item.widthCm * pxPerCm
-          const targetHeightPx = item.heightCm * pxPerCm
+          // item.xCm/yCm/widthCm/heightCm describe the visible content box, not
+          // the whole (possibly padded) file — scale/position the full image so
+          // its content box lands exactly on that rect.
+          const scale = (item.widthCm * pxPerCm) / item.contentWidthPx
+          const fabricLeft = item.xCm * pxPerCm - item.contentXPx * scale
+          const fabricTop = item.yCm * pxPerCm - item.contentYPx * scale
           img.set({
-            left: item.xCm * pxPerCm,
-            top: item.yCm * pxPerCm,
+            left: fabricLeft,
+            top: fabricTop,
             originX: 'left',
             originY: 'top',
             angle: item.angle ?? 0,
-            scaleX: targetWidthPx / (img.width ?? targetWidthPx),
-            scaleY: targetHeightPx / (img.height ?? targetHeightPx),
+            scaleX: scale,
+            scaleY: scale,
             selectable: true,
             evented: true,
             cornerColor: '#0ea5e9',
@@ -155,7 +194,14 @@ export default function CanvasPage({
           })
           // Only the 4 corners (proportional resize) + rotation stay interactive.
           img.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false })
-          ;(img as TaggedImage).itemId = item.id
+          const tagged = img as TaggedImage
+          tagged.itemId = item.id
+          tagged.contentBox = {
+            contentXPx: item.contentXPx,
+            contentYPx: item.contentYPx,
+            contentWidthPx: item.contentWidthPx,
+            contentHeightPx: item.contentHeightPx,
+          }
           return img
         })
       )
@@ -177,13 +223,18 @@ export default function CanvasPage({
     }
   }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, updatePlacedItem])
 
+  const backgroundStyle = BACKGROUND_PRESETS[sheetBackgroundColor]
+    ? { backgroundImage: BACKGROUND_PRESETS[sheetBackgroundColor], backgroundSize: '20px 20px' }
+    : { backgroundColor: sheetBackgroundColor }
+
   return (
     <div
-      className="gang-canvas-grid relative border bg-white shadow-sm"
+      className="gang-canvas-grid relative border shadow-sm"
       style={{
         width: widthPx,
         height: heightPx,
         backgroundSize: `${pxPerCm}px ${pxPerCm}px`,
+        ...backgroundStyle,
       }}
     >
       <canvas ref={canvasElRef} />
