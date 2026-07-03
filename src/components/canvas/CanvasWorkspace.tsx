@@ -138,20 +138,15 @@ export default function CanvasWorkspace() {
                       </Button>
                     </div>
                   </div>
-                  <div className="flex">
-                    <div style={{ marginTop: pxPerCm }}>
-                      <Ruler orientation="vertical" lengthCm={maxHeightCm} pxPerCm={pxPerCm} />
-                    </div>
-                    <div className="flex flex-col">
-                      <Ruler orientation="horizontal" lengthCm={canvasWidthCm} pxPerCm={pxPerCm} />
-                      <CanvasPage
-                        page={page}
-                        canvasWidthCm={canvasWidthCm}
-                        maxHeightCm={maxHeightCm}
-                        pxPerCm={pxPerCm}
-                        onSelectionChange={setSelection}
-                      />
-                    </div>
+                  <div className="flex flex-col">
+                    <Ruler orientation="horizontal" lengthCm={canvasWidthCm} pxPerCm={pxPerCm} />
+                    <CanvasPage
+                      page={page}
+                      canvasWidthCm={canvasWidthCm}
+                      maxHeightCm={maxHeightCm}
+                      pxPerCm={pxPerCm}
+                      onSelectionChange={setSelection}
+                    />
                   </div>
                 </div>
               )

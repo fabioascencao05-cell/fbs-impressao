@@ -63,7 +63,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[340px]">
+    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[var(--sidebar-w,340px)]">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold leading-tight">Gang Sheet Builder</h1>
