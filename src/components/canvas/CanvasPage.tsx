@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import * as fabric from 'fabric'
-import { X } from 'lucide-react'
+import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import type { PackedPage } from '@/types'
 
@@ -48,6 +48,7 @@ export default function CanvasPage({
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
+  const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
 
   const widthPx = canvasWidthCm * pxPerCm
@@ -239,25 +240,37 @@ export default function CanvasPage({
     >
       <canvas ref={canvasElRef} />
 
-      {/* Delete button per item, always available without selecting on the Fabric canvas first. */}
+      {/* Action buttons per item (duplicate + delete), always available without selecting. */}
       {page.items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          title="Excluir esta arte"
-          className="absolute z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-60 shadow transition-opacity hover:opacity-100"
-          style={{
-            left: (item.xCm + item.widthCm) * pxPerCm - 10,
-            top: item.yCm * pxPerCm - 10,
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            removePlacedItem(page.index, item.id)
-          }}
-        >
-          <X className="h-3 w-3" />
-        </button>
+        <div key={item.id} className="absolute z-10 flex gap-0.5" style={{
+          left: (item.xCm + item.widthCm) * pxPerCm - 26,
+          top: item.yCm * pxPerCm - 10,
+        }}>
+          <button
+            type="button"
+            title="Duplicar esta arte"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground opacity-60 shadow transition-opacity hover:opacity-100"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              duplicatePlacedItem(page.index, item.id)
+            }}
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            title="Excluir esta arte"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-60 shadow transition-opacity hover:opacity-100"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              removePlacedItem(page.index, item.id)
+            }}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
       ))}
     </div>
   )

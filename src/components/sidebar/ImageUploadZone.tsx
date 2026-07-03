@@ -18,7 +18,7 @@ export default function ImageUploadZone() {
           toast({
             variant: 'destructive',
             title: 'Alguns arquivos foram ignorados',
-            description: `${skipped} arquivo(s) não são PNG. Apenas .PNG é aceito.`,
+            description: `${skipped} arquivo(s) com formato não suportado. Aceitos: PNG, JPG, WebP.`,
           })
         }
         if (added > 0) {
@@ -51,12 +51,12 @@ export default function ImageUploadZone() {
       }}
     >
       <UploadCloud className="h-6 w-6 text-muted-foreground" />
-      <p className="text-sm font-medium">Arraste imagens .PNG aqui</p>
-      <p className="text-xs text-muted-foreground">ou clique para selecionar</p>
+      <p className="text-sm font-medium">Arraste imagens aqui</p>
+      <p className="text-xs text-muted-foreground">PNG, JPG ou WebP · clique para selecionar</p>
       <input
         ref={inputRef}
         type="file"
-        accept="image/png"
+        accept="image/png,image/jpeg,image/webp"
         multiple
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
