@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import * as fabric from 'fabric'
-import { CANVAS_WIDTH_CM } from '@/lib/constants'
+import { X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import type { PackedPage } from '@/types'
 
@@ -14,6 +14,7 @@ export interface SelectionInfo {
 
 interface CanvasPageProps {
   page: PackedPage
+  canvasWidthCm: number
   maxHeightCm: number
   pxPerCm: number
   onSelectionChange: (sel: SelectionInfo | null) => void
@@ -24,6 +25,7 @@ type TaggedImage = fabric.FabricImage & { itemId?: string }
 
 export default function CanvasPage({
   page,
+  canvasWidthCm,
   maxHeightCm,
   pxPerCm,
   onSelectionChange,
@@ -31,8 +33,9 @@ export default function CanvasPage({
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
+  const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
 
-  const widthPx = CANVAS_WIDTH_CM * pxPerCm
+  const widthPx = canvasWidthCm * pxPerCm
   const heightPx = maxHeightCm * pxPerCm
 
   // (Re)create the Fabric canvas whenever the pixel dimensions change (zoom / max height).
@@ -43,7 +46,8 @@ export default function CanvasPage({
       width: widthPx,
       height: heightPx,
       selection: false, // single-object selection only, no rubber-band group select
-      uniformScaling: false, // free distort by default; hold Shift for proportional
+      uniformScaling: true, // corner-drag always keeps aspect ratio
+      uniScaleKey: undefined, // no modifier key ever unlocks free distortion
       preserveObjectStacking: true,
       backgroundColor: 'transparent',
     })
@@ -149,6 +153,8 @@ export default function CanvasPage({
             cornerSize: 10,
             transparentCorners: false,
           })
+          // Only the 4 corners (proportional resize) + rotation stay interactive.
+          img.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false })
           ;(img as TaggedImage).itemId = item.id
           return img
         })
@@ -181,6 +187,27 @@ export default function CanvasPage({
       }}
     >
       <canvas ref={canvasElRef} />
+
+      {/* Delete button per item, always available without selecting on the Fabric canvas first. */}
+      {page.items.map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          title="Excluir esta arte"
+          className="absolute z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-60 shadow transition-opacity hover:opacity-100"
+          style={{
+            left: (item.xCm + item.widthCm) * pxPerCm - 10,
+            top: item.yCm * pxPerCm - 10,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            removePlacedItem(page.index, item.id)
+          }}
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ))}
     </div>
   )
 }

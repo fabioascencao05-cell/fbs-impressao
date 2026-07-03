@@ -11,7 +11,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
   const removeImage = useGangSheetStore((s) => s.removeImage)
 
   return (
-    <div className="flex gap-3 rounded-lg border p-2.5">
+    <div className="flex min-w-0 gap-3 rounded-lg border p-2.5">
       <img
         src={image.previewUrl}
         alt={image.file.name}
@@ -34,7 +34,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
         </div>
 
         <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-0.5">
+          <div className="min-w-0 space-y-0.5">
             <Label htmlFor={`qty-${image.id}`}>Quantidade</Label>
             <Input
               id={`qty-${image.id}`}
@@ -44,8 +44,10 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
               onChange={(e) => updateQuantity(image.id, Number(e.target.value))}
             />
           </div>
-          <div className="space-y-0.5">
-            <Label htmlFor={`width-${image.id}`}>Largura (cm)</Label>
+          <div className="min-w-0 space-y-0.5">
+            <Label htmlFor={`width-${image.id}`} className="truncate">
+              Largura (cm)
+            </Label>
             <Input
               id={`width-${image.id}`}
               type="number"

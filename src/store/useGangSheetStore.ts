@@ -1,11 +1,19 @@
 import { create } from 'zustand'
 import { packImages } from '@/lib/binPacking'
-import { DEFAULT_MAX_HEIGHT_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
+import {
+  DEFAULT_CANVAS_WIDTH_CM,
+  DEFAULT_ITEM_GAP_CM,
+  DEFAULT_MAX_HEIGHT_CM,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from '@/lib/constants'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 interface GangSheetState {
   images: GangImage[]
   maxHeightCm: number
+  canvasWidthCm: number
+  itemGapCm: number
   pages: PackedPage[]
   zoom: number
 
@@ -14,9 +22,12 @@ interface GangSheetState {
   updateQuantity: (id: string, quantity: number) => void
   updateWidthCm: (id: string, widthCm: number) => void
   setMaxHeightCm: (heightCm: number) => void
+  setCanvasWidthCm: (widthCm: number) => void
+  setItemGapCm: (gapCm: number) => void
   generateLayout: () => void
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
+  removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   reset: () => void
 }
@@ -39,6 +50,8 @@ function clampZoom(z: number) {
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   images: [],
   maxHeightCm: DEFAULT_MAX_HEIGHT_CM,
+  canvasWidthCm: DEFAULT_CANVAS_WIDTH_CM,
+  itemGapCm: DEFAULT_ITEM_GAP_CM,
   pages: [],
   zoom: 1,
 
@@ -104,9 +117,17 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     set({ maxHeightCm: Math.max(1, heightCm) })
   },
 
+  setCanvasWidthCm: (widthCm) => {
+    set({ canvasWidthCm: Math.max(1, widthCm) })
+  },
+
+  setItemGapCm: (gapCm) => {
+    set({ itemGapCm: Math.max(0, gapCm) })
+  },
+
   generateLayout: () => {
-    const { images, maxHeightCm } = get()
-    const pages = packImages(images, maxHeightCm)
+    const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
+    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
     set({ pages })
   },
 
@@ -129,6 +150,14 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
         return { ...page, items, usedHeightCm }
       }),
+    }))
+  },
+
+  removePage: (pageIndex) => {
+    set((state) => ({
+      pages: state.pages
+        .filter((page) => page.index !== pageIndex)
+        .map((page, index) => ({ ...page, index })),
     }))
   },
 
