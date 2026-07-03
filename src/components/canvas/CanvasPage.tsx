@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
-import { X } from 'lucide-react'
+import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import type { PackedPage } from '@/types'
 
@@ -27,6 +27,14 @@ interface ContentBox {
   contentHeightPx: number
 }
 
+interface HudInfo {
+  left: number
+  top: number
+  widthCm: number
+  heightCm: number
+  angle: number
+}
+
 // Fabric objects carry the source PlacedItem id + its content bounding box
 // (in the original file's px space) so edits map back to the store using
 // the visible artwork's rect, not the full (possibly padded) image file.
@@ -48,7 +56,9 @@ export default function CanvasPage({
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
+  const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
+  const [hud, setHud] = useState<HudInfo | null>(null)
 
   const widthPx = canvasWidthCm * pxPerCm
   const heightPx = maxHeightCm * pxPerCm
@@ -100,16 +110,20 @@ export default function CanvasPage({
       const obj = canvas.getActiveObject() as TaggedImage | undefined
       if (!obj?.itemId) {
         onSelectionChange(null)
+        setHud(null)
         return
       }
       const rect = contentRectCm(obj)
-      onSelectionChange({
-        pageIndex,
-        itemId: obj.itemId,
-        widthCm: rect?.widthCm ?? obj.getScaledWidth() / pxPerCm,
-        heightCm: rect?.heightCm ?? obj.getScaledHeight() / pxPerCm,
-        angle: obj.angle ?? 0,
-      })
+      const widthCm = rect?.widthCm ?? obj.getScaledWidth() / pxPerCm
+      const heightCm = rect?.heightCm ?? obj.getScaledHeight() / pxPerCm
+      const angle = obj.angle ?? 0
+      onSelectionChange({ pageIndex, itemId: obj.itemId, widthCm, heightCm, angle })
+
+      // Position the CorelDraw-style dimension readout above the object's
+      // (rotated) bounding box — same coordinate space as the canvas element.
+      obj.setCoords()
+      const br = obj.getBoundingRect()
+      setHud({ left: br.left + br.width / 2, top: br.top, widthCm, heightCm, angle })
     }
 
     // Keep the (possibly rotated) bounding box of the whole image — padding
@@ -158,7 +172,10 @@ export default function CanvasPage({
 
     canvas.on('selection:created', reportSelection)
     canvas.on('selection:updated', reportSelection)
-    canvas.on('selection:cleared', () => onSelectionChange(null))
+    canvas.on('selection:cleared', () => {
+      onSelectionChange(null)
+      setHud(null)
+    })
     canvas.on('object:moving', onMoving)
     canvas.on('object:scaling', onScaling)
     canvas.on('object:rotating', onRotating)
@@ -239,26 +256,50 @@ export default function CanvasPage({
     >
       <canvas ref={canvasElRef} />
 
-      {/* Delete button per item, always available without selecting on the Fabric canvas first. */}
+      {/* Action buttons per item (duplicate + delete), always available without selecting. */}
       {page.items.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          title="Excluir esta arte"
-          className="absolute z-10 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-60 shadow transition-opacity hover:opacity-100"
-          style={{
-            left: (item.xCm + item.widthCm) * pxPerCm - 10,
-            top: item.yCm * pxPerCm - 10,
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation()
-            removePlacedItem(page.index, item.id)
-          }}
-        >
-          <X className="h-3 w-3" />
-        </button>
+        <div key={item.id} className="absolute z-10 flex gap-0.5" style={{
+          left: (item.xCm + item.widthCm) * pxPerCm - 26,
+          top: item.yCm * pxPerCm - 10,
+        }}>
+          <button
+            type="button"
+            title="Duplicar esta arte"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground opacity-60 shadow transition-opacity hover:opacity-100"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              duplicatePlacedItem(page.index, item.id)
+            }}
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            title="Excluir esta arte"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-60 shadow transition-opacity hover:opacity-100"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              removePlacedItem(page.index, item.id)
+            }}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
       ))}
+
+      {/* CorelDraw-style dimension readout: floats above the selected art,
+          always fully visible and updates live while moving/scaling/rotating. */}
+      {hud && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-zinc-900/90 px-2 py-1 text-[11px] font-medium tabular-nums text-white shadow-lg dark:bg-zinc-800/95"
+          style={{ left: hud.left, top: hud.top - 6 }}
+        >
+          {hud.widthCm.toFixed(1)} × {hud.heightCm.toFixed(1)} cm
+          {hud.angle ? ` · ${Math.round(hud.angle)}°` : ''}
+        </div>
+      )}
     </div>
   )
 }

@@ -5,10 +5,13 @@ import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
   DEFAULT_MAX_HEIGHT_CM,
+  EXPORT_PX_PER_CM,
   ZOOM_MAX,
   ZOOM_MIN,
 } from '@/lib/constants'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
+
+const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
 interface GangSheetState {
   images: GangImage[]
@@ -18,6 +21,7 @@ interface GangSheetState {
   pages: PackedPage[]
   zoom: number
   sheetBackgroundColor: string
+  costPerCm2: number
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -29,13 +33,13 @@ interface GangSheetState {
   generateLayout: () => void
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
+  duplicatePlacedItem: (pageIndex: number, itemId: string) => void
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
+  setCostPerCm2: (cost: number) => void
   reset: () => void
 }
-
-const DEFAULT_WIDTH_CM = 10
 
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
@@ -49,15 +53,20 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pages: [],
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
+  costPerCm2: 0,
 
   addImages: async (files) => {
-    const pngFiles = files.filter((f) => f.type === 'image/png')
-    const skipped = files.length - pngFiles.length
+    const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
+    const skipped = files.length - accepted.length
     const newImages: GangImage[] = []
 
-    for (const file of pngFiles) {
+    for (const file of accepted) {
       const box = await computeContentBox(file)
       const aspectRatio = box.heightPx / box.widthPx
+      // Real-world size at print resolution — never altered/clamped, so the
+      // uploaded artwork keeps its exact measure regardless of sheet size.
+      const widthCm = box.widthPx / EXPORT_PX_PER_CM
+      const heightCm = widthCm * aspectRatio
       newImages.push({
         id: crypto.randomUUID(),
         file,
@@ -66,8 +75,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         naturalHeightPx: box.naturalHeightPx,
         aspectRatio,
         quantity: 1,
-        widthCm: DEFAULT_WIDTH_CM,
-        heightCm: DEFAULT_WIDTH_CM * aspectRatio,
+        widthCm,
+        heightCm,
         contentXPx: box.xPx,
         contentYPx: box.yPx,
         contentWidthPx: box.widthPx,
@@ -76,7 +85,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     }
 
     set((state) => ({ images: [...state.images, ...newImages] }))
-    return { added: newImages.length, skipped }
+    return { added: accepted.length, skipped }
   },
 
   removeImage: (id) => {
@@ -152,6 +161,25 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     }))
   },
 
+  duplicatePlacedItem: (pageIndex, itemId) => {
+    set((state) => ({
+      pages: state.pages.map((page) => {
+        if (page.index !== pageIndex) return page
+        const source = page.items.find((it) => it.id === itemId)
+        if (!source) return page
+        const clone: PlacedItem = {
+          ...source,
+          id: `${source.sourceImageId}-dup-${Date.now()}`,
+          xCm: source.xCm + 1,
+          yCm: source.yCm + 1,
+        }
+        const items = [...page.items, clone]
+        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
+        return { ...page, items, usedHeightCm }
+      }),
+    }))
+  },
+
   removePage: (pageIndex) => {
     set((state) => ({
       pages: state.pages
@@ -163,6 +191,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
+
+  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
 
   reset: () => {
     set((state) => {

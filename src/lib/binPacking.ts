@@ -119,17 +119,25 @@ function findBestFit(
   freeRects: FreeRect[],
   width: number,
   height: number
-): { rect: FreeRect; shortSide: number; longSide: number } | null {
-  let best: { rect: FreeRect; shortSide: number; longSide: number } | null = null
-  for (const rect of freeRects) {
-    if (rect.width < width || rect.height < height) continue
-    const leftoverW = rect.width - width
-    const leftoverH = rect.height - height
-    const shortSide = Math.min(leftoverW, leftoverH)
-    const longSide = Math.max(leftoverW, leftoverH)
-    if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
-      best = { rect, shortSide, longSide }
+): { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null {
+  let best: { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null = null
+
+  const tryFit = (w: number, h: number, rotated: boolean) => {
+    for (const rect of freeRects) {
+      if (rect.width < w || rect.height < h) continue
+      const leftoverW = rect.width - w
+      const leftoverH = rect.height - h
+      const shortSide = Math.min(leftoverW, leftoverH)
+      const longSide = Math.max(leftoverW, leftoverH)
+      if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
+        best = { rect, shortSide, longSide, rotated }
+      }
     }
+  }
+
+  tryFit(width, height, false)
+  if (Math.abs(width - height) > 0.001) {
+    tryFit(height, width, true)
   }
   return best
 }
@@ -155,10 +163,6 @@ export function packImages(
 ): PackedPage[] {
   const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
 
-  // Guarantee every item can fit a fresh, empty page even after reserving its gap.
-  const usableW = Math.max(0.01, canvasWidthCm - itemGapCm)
-  const usableH = Math.max(0.01, maxHeightCm - itemGapCm)
-
   const buckets: PageBucket[] = []
 
   const openNewBucket = (): PageBucket => {
@@ -171,12 +175,12 @@ export function packImages(
   }
 
   for (const unit of units) {
-    const itemWidth = Math.min(unit.widthCm, usableW)
-    const itemHeight = Math.min(unit.heightCm, usableH)
+    const itemWidth = unit.widthCm
+    const itemHeight = unit.heightCm
     const occupiedWidth = itemWidth + itemGapCm
     const occupiedHeight = itemHeight + itemGapCm
 
-    let target: { bucket: PageBucket; rect: FreeRect } | null = null
+    let target: { bucket: PageBucket; rect: FreeRect; rotated: boolean } | null = null
     let bestShortSide = Infinity
     let bestLongSide = Infinity
 
@@ -184,7 +188,7 @@ export function packImages(
       const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
       if (!fit) continue
       if (fit.shortSide < bestShortSide || (fit.shortSide === bestShortSide && fit.longSide < bestLongSide)) {
-        target = { bucket, rect: fit.rect }
+        target = { bucket, rect: fit.rect, rotated: fit.rotated }
         bestShortSide = fit.shortSide
         bestLongSide = fit.longSide
       }
@@ -192,11 +196,13 @@ export function packImages(
 
     if (!target) {
       const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0] }
+      target = { bucket, rect: bucket.freeRects[0], rotated: false }
     }
 
-    const { bucket, rect } = target
-    const used: FreeRect = { x: rect.x, y: rect.y, width: occupiedWidth, height: occupiedHeight }
+    const { bucket, rect, rotated } = target
+    const placedW = rotated ? itemHeight : itemWidth
+    const placedH = rotated ? itemWidth : itemHeight
+    const used: FreeRect = { x: rect.x, y: rect.y, width: placedW + itemGapCm, height: placedH + itemGapCm }
 
     bucket.items.push({
       id: unit.id,
@@ -204,9 +210,9 @@ export function packImages(
       previewUrl: unit.previewUrl,
       xCm: rect.x,
       yCm: rect.y,
-      widthCm: itemWidth,
-      heightCm: itemHeight,
-      angle: 0,
+      widthCm: placedW,
+      heightCm: placedH,
+      angle: rotated ? 90 : 0,
       contentXPx: unit.contentXPx,
       contentYPx: unit.contentYPx,
       contentWidthPx: unit.contentWidthPx,

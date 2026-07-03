@@ -25,6 +25,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCanvasWidthCm = useGangSheetStore((s) => s.setCanvasWidthCm)
   const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
+  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
+  const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
   const { signOut } = useAuth()
@@ -61,7 +63,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[340px]">
+    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[var(--sidebar-w,340px)]">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold leading-tight">Gang Sheet Builder</h1>
@@ -118,6 +120,18 @@ export default function Sidebar({ onClose }: SidebarProps) {
               step={0.1}
               value={itemGapCm}
               onChange={(e) => setItemGapCm(Number(e.target.value))}
+            />
+          </div>
+          <div className="space-y-0.5">
+            <Label htmlFor="cost-cm2">Custo por cm² (R$)</Label>
+            <Input
+              id="cost-cm2"
+              type="number"
+              min={0}
+              step={0.01}
+              value={costPerCm2 || ''}
+              placeholder="0.00"
+              onChange={(e) => setCostPerCm2(Number(e.target.value))}
             />
           </div>
         </div>
