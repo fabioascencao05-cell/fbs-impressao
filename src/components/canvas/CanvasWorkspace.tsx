@@ -25,7 +25,7 @@ export default function CanvasWorkspace() {
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
+  const pricePerLinearMeter = useGangSheetStore((s) => s.pricePerLinearMeter)
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -106,8 +106,8 @@ export default function CanvasWorkspace() {
             {visiblePages.map((page) => {
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
-              const usedArea = page.items.reduce((sum, it) => sum + it.widthCm * it.heightCm, 0)
-              const pageCost = costPerCm2 > 0 ? usedArea * costPerCm2 : 0
+              const pageCost =
+                pricePerLinearMeter > 0 ? (page.usedHeightCm / 100) * pricePerLinearMeter : 0
               return (
                 <div key={page.index} className="flex flex-col">
                   <div className="mb-1 flex items-center justify-between gap-4">
