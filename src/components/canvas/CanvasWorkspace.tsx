@@ -25,10 +25,11 @@ export default function CanvasWorkspace() {
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
+  const pricePerMeter = useGangSheetStore((s) => s.pricePerMeter)
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const panRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null)
 
   const pxPerCm = DISPLAY_PX_PER_CM * zoom
   const visiblePages = useMemo(() => pages.filter((p) => p.items.length > 0), [pages])
@@ -75,6 +76,41 @@ export default function CanvasWorkspace() {
     return () => window.removeEventListener('keydown', onKey)
   }, [selection, handleDeleteSelected])
 
+  // Drag empty workspace background to pan the view. Clicks on the Fabric
+  // canvases (art manipulation) and on buttons keep their own behavior.
+  const handlePanStart = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement
+    if (target.closest('canvas') || target.closest('button')) return
+    const el = scrollRef.current
+    if (!el) return
+    panRef.current = { startX: e.clientX, startY: e.clientY, left: el.scrollLeft, top: el.scrollTop }
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+    e.preventDefault()
+  }, [])
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const pan = panRef.current
+      const el = scrollRef.current
+      if (!pan || !el) return
+      el.scrollLeft = pan.left - (e.clientX - pan.startX)
+      el.scrollTop = pan.top - (e.clientY - pan.startY)
+    }
+    const onUp = () => {
+      if (!panRef.current) return
+      panRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [])
+
   return (
     <main className="flex flex-1 flex-col overflow-hidden">
       {visiblePages.length > 0 && (
@@ -88,7 +124,11 @@ export default function CanvasWorkspace() {
         />
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-auto bg-muted/30 p-8">
+      <div
+        ref={scrollRef}
+        onMouseDown={handlePanStart}
+        className="flex-1 cursor-grab overflow-auto bg-muted/30 p-8"
+      >
         {visiblePages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl border bg-card">
@@ -102,12 +142,13 @@ export default function CanvasWorkspace() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col items-start gap-10">
+          // w-fit + mx-auto centers the sheet when it fits; when wider than the
+          // viewport the auto margins collapse and overflow scrolling takes over.
+          <div className="mx-auto flex w-fit flex-col items-start gap-10">
             {visiblePages.map((page) => {
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
-              const usedArea = page.items.reduce((sum, it) => sum + it.widthCm * it.heightCm, 0)
-              const pageCost = costPerCm2 > 0 ? usedArea * costPerCm2 : 0
+              const pageCost = pricePerMeter > 0 ? (page.usedHeightCm / 100) * pricePerMeter : 0
               return (
                 <div key={page.index} className="flex flex-col">
                   <div className="mb-1 flex items-center justify-between gap-4">

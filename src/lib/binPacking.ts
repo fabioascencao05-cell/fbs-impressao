@@ -118,7 +118,8 @@ function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
 function findBestFit(
   freeRects: FreeRect[],
   width: number,
-  height: number
+  height: number,
+  allowRotation: boolean
 ): { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null {
   let best: { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null = null
 
@@ -136,7 +137,7 @@ function findBestFit(
   }
 
   tryFit(width, height, false)
-  if (Math.abs(width - height) > 0.001) {
+  if (allowRotation && Math.abs(width - height) > 0.001) {
     tryFit(height, width, true)
   }
   return best
@@ -152,14 +153,16 @@ function findBestFit(
  * - Placing an item splits/prunes the free rectangle list so leftover gaps
  *   next to and below it stay available for smaller items later — unlike
  *   shelf packing, nothing is wasted just because it doesn't share a row.
- * - Rotation is not attempted here; the packer always outputs angle 0 and
- *   rotation stays a manual, on-canvas action.
+ * - When `allowRotation` is true, each item is also tried rotated 90°
+ *   (angle 90 in the output); when false, artwork keeps its original
+ *   orientation and rotation stays a manual, on-canvas action.
  */
 export function packImages(
   images: GangImage[],
   maxHeightCm: number,
   canvasWidthCm: number,
-  itemGapCm: number
+  itemGapCm: number,
+  allowRotation: boolean
 ): PackedPage[] {
   const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
 
@@ -185,7 +188,7 @@ export function packImages(
     let bestLongSide = Infinity
 
     for (const bucket of buckets) {
-      const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
+      const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight, allowRotation)
       if (!fit) continue
       if (fit.shortSide < bestShortSide || (fit.shortSide === bestShortSide && fit.longSide < bestLongSide)) {
         target = { bucket, rect: fit.rect, rotated: fit.rotated }

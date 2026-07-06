@@ -21,12 +21,14 @@ interface GangSheetState {
   pages: PackedPage[]
   zoom: number
   sheetBackgroundColor: string
-  costPerCm2: number
+  pricePerMeter: number
+  allowRotation: boolean
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
   updateQuantity: (id: string, quantity: number) => void
   updateWidthCm: (id: string, widthCm: number) => void
+  updateHeightCm: (id: string, heightCm: number) => void
   setMaxHeightCm: (heightCm: number) => void
   setCanvasWidthCm: (widthCm: number) => void
   setItemGapCm: (gapCm: number) => void
@@ -37,12 +39,19 @@ interface GangSheetState {
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
-  setCostPerCm2: (cost: number) => void
+  setPricePerMeter: (price: number) => void
+  setAllowRotation: (allow: boolean) => void
   reset: () => void
 }
 
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+}
+
+// All physical measures are kept to 0.1cm so the UI never shows raw
+// floating-point tails like 4.788135593220339.
+function roundCm(v: number) {
+  return Math.round(v * 10) / 10
 }
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
@@ -53,7 +62,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pages: [],
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
-  costPerCm2: 0,
+  pricePerMeter: 0,
+  allowRotation: true,
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
@@ -65,8 +75,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       const aspectRatio = box.heightPx / box.widthPx
       // Real-world size at print resolution — never altered/clamped, so the
       // uploaded artwork keeps its exact measure regardless of sheet size.
-      const widthCm = box.widthPx / EXPORT_PX_PER_CM
-      const heightCm = widthCm * aspectRatio
+      const widthCm = roundCm(box.widthPx / EXPORT_PX_PER_CM)
+      const heightCm = roundCm(widthCm * aspectRatio)
       newImages.push({
         id: crypto.randomUUID(),
         file,
@@ -115,7 +125,17 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     set((state) => ({
       images: state.images.map((img) =>
         img.id === id && widthCm > 0
-          ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
+          ? { ...img, widthCm: roundCm(widthCm), heightCm: roundCm(widthCm * img.aspectRatio) }
+          : img
+      ),
+    }))
+  },
+
+  updateHeightCm: (id, heightCm) => {
+    set((state) => ({
+      images: state.images.map((img) =>
+        img.id === id && heightCm > 0
+          ? { ...img, heightCm: roundCm(heightCm), widthCm: roundCm(heightCm / img.aspectRatio) }
           : img
       ),
     }))
@@ -134,8 +154,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   generateLayout: () => {
-    const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
+    const { images, maxHeightCm, canvasWidthCm, itemGapCm, allowRotation } = get()
+    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm, allowRotation)
     set({ pages })
   },
 
@@ -192,7 +212,9 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
+  setPricePerMeter: (price) => set({ pricePerMeter: Math.max(0, price) }),
+
+  setAllowRotation: (allow) => set({ allowRotation: allow }),
 
   reset: () => {
     set((state) => {

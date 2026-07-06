@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
+import { contentCorners, fabricPlacement, type ContentBox } from '@/lib/placement'
 import type { PackedPage } from '@/types'
 
 export interface SelectionInfo {
@@ -18,13 +19,6 @@ interface CanvasPageProps {
   maxHeightCm: number
   pxPerCm: number
   onSelectionChange: (sel: SelectionInfo | null) => void
-}
-
-interface ContentBox {
-  contentXPx: number
-  contentYPx: number
-  contentWidthPx: number
-  contentHeightPx: number
 }
 
 interface HudInfo {
@@ -91,18 +85,22 @@ export default function CanvasPage({
 
     const pageIndex = page.index
 
-    // Content-box dims/position in cm, derived from the object's own scale —
-    // works whether the item just loaded or the user is mid-resize.
+    // Content-box footprint (AABB) in cm, derived from the object's own
+    // scale AND angle — works whether the item just loaded, is mid-resize,
+    // or is rotated (auto 90° or manual).
     const contentRectCm = (obj: TaggedImage) => {
       const box = obj.contentBox
       if (!box) return null
-      const scaleX = obj.scaleX ?? 1
-      const scaleY = obj.scaleY ?? 1
+      const corners = contentCorners(box, obj.scaleX ?? 1, obj.scaleY ?? 1, obj.angle ?? 0)
+      const xs = corners.map((c) => c[0])
+      const ys = corners.map((c) => c[1])
+      const minX = Math.min(...xs)
+      const minY = Math.min(...ys)
       return {
-        widthCm: (box.contentWidthPx * scaleX) / pxPerCm,
-        heightCm: (box.contentHeightPx * scaleY) / pxPerCm,
-        xCm: ((obj.left ?? 0) + box.contentXPx * scaleX) / pxPerCm,
-        yCm: ((obj.top ?? 0) + box.contentYPx * scaleY) / pxPerCm,
+        widthCm: (Math.max(...xs) - minX) / pxPerCm,
+        heightCm: (Math.max(...ys) - minY) / pxPerCm,
+        xCm: ((obj.left ?? 0) + minX) / pxPerCm,
+        yCm: ((obj.top ?? 0) + minY) / pxPerCm,
       }
     }
 
@@ -187,18 +185,18 @@ export default function CanvasPage({
     Promise.all(
       page.items.map((item) =>
         fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' }).then((img) => {
-          // item.xCm/yCm/widthCm/heightCm describe the visible content box, not
-          // the whole (possibly padded) file — scale/position the full image so
-          // its content box lands exactly on that rect.
-          const scale = (item.widthCm * pxPerCm) / item.contentWidthPx
-          const fabricLeft = item.xCm * pxPerCm - item.contentXPx * scale
-          const fabricTop = item.yCm * pxPerCm - item.contentYPx * scale
+          // item.xCm/yCm/widthCm/heightCm describe the visible content box's
+          // AABB after rotation, not the whole (possibly padded) file —
+          // scale/position the full image so its rotated content box lands
+          // exactly on that rect. Fabric rotates around the top-left origin,
+          // so the anchor must compensate for where the rotated corners fall.
+          const { left, top, scale, angle, box } = fabricPlacement(item, pxPerCm)
           img.set({
-            left: fabricLeft,
-            top: fabricTop,
+            left,
+            top,
             originX: 'left',
             originY: 'top',
-            angle: item.angle ?? 0,
+            angle,
             scaleX: scale,
             scaleY: scale,
             selectable: true,
@@ -213,12 +211,7 @@ export default function CanvasPage({
           img.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false })
           const tagged = img as TaggedImage
           tagged.itemId = item.id
-          tagged.contentBox = {
-            contentXPx: item.contentXPx,
-            contentYPx: item.contentYPx,
-            contentWidthPx: item.contentWidthPx,
-            contentHeightPx: item.contentHeightPx,
-          }
+          tagged.contentBox = box
           return img
         })
       )
