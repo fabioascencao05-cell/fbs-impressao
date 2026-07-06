@@ -28,6 +28,7 @@ interface GangSheetState {
   removeImage: (id: string) => void
   updateQuantity: (id: string, quantity: number) => void
   updateWidthCm: (id: string, widthCm: number) => void
+  updateHeightCm: (id: string, heightCm: number) => void
   setMaxHeightCm: (heightCm: number) => void
   setCanvasWidthCm: (widthCm: number) => void
   setItemGapCm: (gapCm: number) => void
@@ -45,6 +46,12 @@ interface GangSheetState {
 
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+}
+
+// All physical measures are kept to 0.1cm so the UI never shows raw
+// floating-point tails like 4.788135593220339.
+function roundCm(v: number) {
+  return Math.round(v * 10) / 10
 }
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
@@ -68,8 +75,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       const aspectRatio = box.heightPx / box.widthPx
       // Real-world size at print resolution — never altered/clamped, so the
       // uploaded artwork keeps its exact measure regardless of sheet size.
-      const widthCm = box.widthPx / EXPORT_PX_PER_CM
-      const heightCm = widthCm * aspectRatio
+      const widthCm = roundCm(box.widthPx / EXPORT_PX_PER_CM)
+      const heightCm = roundCm(widthCm * aspectRatio)
       newImages.push({
         id: crypto.randomUUID(),
         file,
@@ -118,7 +125,17 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     set((state) => ({
       images: state.images.map((img) =>
         img.id === id && widthCm > 0
-          ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
+          ? { ...img, widthCm: roundCm(widthCm), heightCm: roundCm(widthCm * img.aspectRatio) }
+          : img
+      ),
+    }))
+  },
+
+  updateHeightCm: (id, heightCm) => {
+    set((state) => ({
+      images: state.images.map((img) =>
+        img.id === id && heightCm > 0
+          ? { ...img, heightCm: roundCm(heightCm), widthCm: roundCm(heightCm / img.aspectRatio) }
           : img
       ),
     }))
