@@ -37,6 +37,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
   const hasLayout = pages.some((p) => p.items.length > 0)
 
+  // Roll consumption across all pages — usedHeightCm tracks live edits too.
+  const totalUsedMeters =
+    pages.reduce((sum, p) => (p.items.length > 0 ? sum + p.usedHeightCm : sum), 0) / 100
+  const totalValue = totalUsedMeters * pricePerMeter
+
   const handleGenerateLayout = () => {
     generateLayout()
     onClose?.()
@@ -137,6 +142,26 @@ export default function Sidebar({ onClose }: SidebarProps) {
               onChange={(e) => setPricePerMeter(Number(e.target.value))}
             />
           </div>
+          {hasLayout && pricePerMeter > 0 && (
+            <div className="space-y-1 rounded-md border bg-background/60 p-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Comprimento usado</span>
+                <span className="font-medium tabular-nums">
+                  {totalUsedMeters.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} m
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Valor estimado</span>
+                <span className="font-semibold tabular-nums text-primary">
+                  R${' '}
+                  {totalValue.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-2 pt-1">
             <div className="min-w-0">
               <Label htmlFor="allow-rotation">Giro Automático (90°)</Label>
