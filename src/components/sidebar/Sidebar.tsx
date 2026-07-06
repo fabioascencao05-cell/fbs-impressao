@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import ImageUploadZone from './ImageUploadZone'
 import ImageQueueItem from './ImageQueueItem'
@@ -25,8 +26,10 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCanvasWidthCm = useGangSheetStore((s) => s.setCanvasWidthCm)
   const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
-  const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
+  const pricePerMeter = useGangSheetStore((s) => s.pricePerMeter)
+  const setPricePerMeter = useGangSheetStore((s) => s.setPricePerMeter)
+  const allowRotation = useGangSheetStore((s) => s.allowRotation)
+  const setAllowRotation = useGangSheetStore((s) => s.setAllowRotation)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
   const { signOut } = useAuth()
@@ -123,15 +126,28 @@ export default function Sidebar({ onClose }: SidebarProps) {
             />
           </div>
           <div className="space-y-0.5">
-            <Label htmlFor="cost-cm2">Custo por cm² (R$)</Label>
+            <Label htmlFor="price-per-meter">Preço do Metro Linear (R$)</Label>
             <Input
-              id="cost-cm2"
+              id="price-per-meter"
               type="number"
               min={0}
               step={0.01}
-              value={costPerCm2 || ''}
+              value={pricePerMeter || ''}
               placeholder="0.00"
-              onChange={(e) => setCostPerCm2(Number(e.target.value))}
+              onChange={(e) => setPricePerMeter(Number(e.target.value))}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <div className="min-w-0">
+              <Label htmlFor="allow-rotation">Giro Automático (90°)</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Permitir rotacionar estampas para melhor encaixe
+              </p>
+            </div>
+            <Switch
+              id="allow-rotation"
+              checked={allowRotation}
+              onCheckedChange={setAllowRotation}
             />
           </div>
         </div>

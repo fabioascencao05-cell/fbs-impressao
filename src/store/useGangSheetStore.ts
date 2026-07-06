@@ -21,7 +21,8 @@ interface GangSheetState {
   pages: PackedPage[]
   zoom: number
   sheetBackgroundColor: string
-  costPerCm2: number
+  pricePerMeter: number
+  allowRotation: boolean
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -37,7 +38,8 @@ interface GangSheetState {
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
-  setCostPerCm2: (cost: number) => void
+  setPricePerMeter: (price: number) => void
+  setAllowRotation: (allow: boolean) => void
   reset: () => void
 }
 
@@ -53,7 +55,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pages: [],
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
-  costPerCm2: 0,
+  pricePerMeter: 0,
+  allowRotation: true,
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
@@ -134,8 +137,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   generateLayout: () => {
-    const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
+    const { images, maxHeightCm, canvasWidthCm, itemGapCm, allowRotation } = get()
+    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm, allowRotation)
     set({ pages })
   },
 
@@ -192,7 +195,9 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
+  setPricePerMeter: (price) => set({ pricePerMeter: Math.max(0, price) }),
+
+  setAllowRotation: (allow) => set({ allowRotation: allow }),
 
   reset: () => {
     set((state) => {
