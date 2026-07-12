@@ -21,7 +21,7 @@ interface GangSheetState {
   pages: PackedPage[]
   zoom: number
   sheetBackgroundColor: string
-  costPerCm2: number
+  pricePerMeter: number
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -32,12 +32,13 @@ interface GangSheetState {
   setItemGapCm: (gapCm: number) => void
   generateLayout: () => void
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
+  resizeSourceImage: (sourceImageId: string, widthCm: number) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
   duplicatePlacedItem: (pageIndex: number, itemId: string) => void
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
-  setCostPerCm2: (cost: number) => void
+  setPricePerMeter: (price: number) => void
   reset: () => void
 }
 
@@ -53,7 +54,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pages: [],
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
-  costPerCm2: 0,
+  pricePerMeter: 0,
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
@@ -113,13 +114,9 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   updateWidthCm: (id, widthCm) => {
-    set((state) => ({
-      images: state.images.map((img) =>
-        img.id === id && widthCm > 0
-          ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
-          : img
-      ),
-    }))
+    // Editing the queue's "Largura" field behaves like an on-canvas resize:
+    // the new size flows to every placed copy of that image immediately.
+    get().resizeSourceImage(id, widthCm)
   },
 
   setMaxHeightCm: (heightCm) => {
@@ -149,6 +146,45 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         return { ...page, items, usedHeightCm }
       }),
     }))
+  },
+
+  // Resize the queue image AND every placed copy of it to a new content width
+  // (height follows the locked aspect ratio). Positions/angles are preserved;
+  // only the size changes, so a manual resize of one art updates them all.
+  // A follow-up "Gerar Layout" re-packs everything cleanly at the new size.
+  resizeSourceImage: (sourceImageId, rawWidthCm) => {
+    if (!(rawWidthCm > 0)) return
+    // Round to 1 decimal so the "Largura" field stays clean after a corner drag
+    // (matches how uploaded images are rounded), keeping display/pack/export aligned.
+    const widthCm = Math.max(0.1, Math.round(rawWidthCm * 10) / 10)
+    set((state) => {
+      const source = state.images.find((img) => img.id === sourceImageId)
+      const aspectRatio = source?.aspectRatio ?? 1
+      const heightCm = widthCm * aspectRatio
+      return {
+        images: state.images.map((img) =>
+          img.id === sourceImageId ? { ...img, widthCm, heightCm } : img
+        ),
+        pages: state.pages.map((page) => {
+          let touched = false
+          const items = page.items.map((it) => {
+            if (it.sourceImageId !== sourceImageId) return it
+            touched = true
+            // A rotated copy's footprint is the content box turned on its side,
+            // so its width/height are swapped relative to the upright size.
+            const rotated = Math.round(it.angle ?? 0) % 180 !== 0
+            return {
+              ...it,
+              widthCm: rotated ? heightCm : widthCm,
+              heightCm: rotated ? widthCm : heightCm,
+            }
+          })
+          if (!touched) return page
+          const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
+          return { ...page, items, usedHeightCm }
+        }),
+      }
+    })
   },
 
   removePlacedItem: (pageIndex, itemId) => {
@@ -193,7 +229,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
+  setPricePerMeter: (price) => set({ pricePerMeter: Math.max(0, price) }),
 
   reset: () => {
     set((state) => {

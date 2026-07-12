@@ -1,6 +1,7 @@
 import * as fabric from 'fabric'
 import JSZip from 'jszip'
 import { EXPORT_PX_PER_CM } from './constants'
+import { fabricPlacement } from './placement'
 import type { PackedPage } from '@/types'
 
 async function renderPageToBlob(
@@ -8,8 +9,12 @@ async function renderPageToBlob(
   canvasWidthCm: number,
   maxHeightCm: number
 ): Promise<Blob> {
+  // Export at the real length consumed by the layout (capped at the sheet's
+  // max), not the full max height — so the PNG's size matches what's printed
+  // and charged, with no wasted transparent tail below the artwork.
+  const exportHeightCm = Math.min(maxHeightCm, Math.max(1, page.usedHeightCm))
   const widthPx = Math.round(canvasWidthCm * EXPORT_PX_PER_CM)
-  const heightPx = Math.round(maxHeightCm * EXPORT_PX_PER_CM)
+  const heightPx = Math.round(exportHeightCm * EXPORT_PX_PER_CM)
 
   const canvasEl = document.createElement('canvas')
   canvasEl.width = widthPx
@@ -27,21 +32,18 @@ async function renderPageToBlob(
         new Promise<void>((resolve, reject) => {
           fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' })
             .then((img) => {
-              // item.xCm/yCm/widthCm/heightCm describe the visible content box,
-              // not the whole (possibly padded) file — scale/position the full
-              // image so its content box lands exactly on that rect, matching
-              // the on-screen editor pixel for pixel.
-              const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
-              const left = item.xCm * EXPORT_PX_PER_CM - item.contentXPx * scale
-              const top = item.yCm * EXPORT_PX_PER_CM - item.contentYPx * scale
+              // Same centre-origin placement as the on-screen editor, at print
+              // resolution — so the export matches the preview pixel for pixel,
+              // including any 90°-rotated art.
+              const pl = fabricPlacement(item, EXPORT_PX_PER_CM)
               img.set({
-                left,
-                top,
-                originX: 'left',
-                originY: 'top',
-                angle: item.angle ?? 0,
-                scaleX: scale,
-                scaleY: scale,
+                left: pl.left,
+                top: pl.top,
+                originX: 'center',
+                originY: 'center',
+                angle: pl.angle,
+                scaleX: pl.scale,
+                scaleY: pl.scale,
                 selectable: false,
               })
               staticCanvas.add(img)

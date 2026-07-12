@@ -143,26 +143,17 @@ function findBestFit(
 }
 
 /**
- * MaxRects bin packing (Best Short Side Fit heuristic):
- * - Each page tracks its free rectangular space (starting as the whole
- *   canvasWidthCm × maxHeightCm sheet).
- * - Items are sorted by area (largest first) and placed into whichever
- *   already-open page offers the tightest fit; a new page opens only when
- *   nothing fits anywhere.
- * - Placing an item splits/prunes the free rectangle list so leftover gaps
- *   next to and below it stay available for smaller items later — unlike
- *   shelf packing, nothing is wasted just because it doesn't share a row.
- * - Rotation is not attempted here; the packer always outputs angle 0 and
- *   rotation stays a manual, on-canvas action.
+ * Runs one full MaxRects (Best Short Side Fit) pass over an already-ordered
+ * list of units and returns the resulting pages. Extracted so the public
+ * packer can try several orderings and keep the most material-efficient one.
+ * Rotation (90°) is attempted per item whenever it yields a tighter fit.
  */
-export function packImages(
-  images: GangImage[],
+function packUnits(
+  units: PackableUnit[],
   maxHeightCm: number,
   canvasWidthCm: number,
   itemGapCm: number
 ): PackedPage[] {
-  const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
-
   const buckets: PageBucket[] = []
 
   const openNewBucket = (): PageBucket => {
@@ -196,7 +187,10 @@ export function packImages(
 
     if (!target) {
       const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0], rotated: false }
+      // On a fresh sheet, still allow rotation if the item only fits rotated
+      // (taller than the sheet in its natural orientation but not when turned).
+      const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
+      target = { bucket, rect: bucket.freeRects[0], rotated: fit?.rotated ?? false }
     }
 
     const { bucket, rect, rotated } = target
@@ -231,4 +225,59 @@ export function packImages(
     items: bucket.items,
     usedHeightCm: bucket.items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0),
   }))
+}
+
+/**
+ * Total linear length consumed across every page. This is exactly what the
+ * per-meter price is charged on, so minimizing it minimizes both wasted
+ * material and cost — our packing-quality score (lower is better).
+ */
+function totalUsedLength(pages: PackedPage[]): number {
+  return pages.reduce((sum, p) => sum + p.usedHeightCm, 0)
+}
+
+// Candidate unit orderings. MaxRects is sensitive to insertion order, and no
+// single sort wins on every input, so we pack with each and keep the tightest.
+const SORT_STRATEGIES: ((a: PackableUnit, b: PackableUnit) => number)[] = [
+  (a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm, // area desc
+  (a, b) => b.heightCm - a.heightCm, // tallest first
+  (a, b) => b.widthCm - a.widthCm, // widest first
+  (a, b) => Math.max(b.widthCm, b.heightCm) - Math.max(a.widthCm, a.heightCm), // longest side desc
+]
+
+/**
+ * Material-efficient bin packing for the gang sheet.
+ *
+ * Expands the queue into individual units, then packs them with MaxRects
+ * (Best Short Side Fit) under several unit orderings — keeping whichever
+ * layout consumes the least total linear length (i.e. the cheapest, most
+ * economical result). Each item may be rotated 90° when that produces a
+ * tighter fit. A new page opens only when a unit fits nowhere on the open
+ * sheets, so gaps beside and below placed art stay usable for smaller pieces.
+ */
+export function packImages(
+  images: GangImage[],
+  maxHeightCm: number,
+  canvasWidthCm: number,
+  itemGapCm: number
+): PackedPage[] {
+  const base = expandQueue(images)
+  if (base.length === 0) return packUnits(base, maxHeightCm, canvasWidthCm, itemGapCm)
+
+  let best: PackedPage[] | null = null
+  let bestScore = Infinity
+
+  for (const strategy of SORT_STRATEGIES) {
+    const ordered = [...base].sort(strategy)
+    const pages = packUnits(ordered, maxHeightCm, canvasWidthCm, itemGapCm)
+    // Fewer pages first, then least total length — a tie in length prefers
+    // the layout that uses fewer physical sheets.
+    const score = pages.length * 1_000_000 + totalUsedLength(pages)
+    if (score < bestScore) {
+      best = pages
+      bestScore = score
+    }
+  }
+
+  return best ?? packUnits(base, maxHeightCm, canvasWidthCm, itemGapCm)
 }
