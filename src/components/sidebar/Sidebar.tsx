@@ -26,8 +26,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCanvasWidthCm = useGangSheetStore((s) => s.setCanvasWidthCm)
   const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
-  const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
+  const pricePerMeter = useGangSheetStore((s) => s.pricePerMeter)
+  const setPricePerMeter = useGangSheetStore((s) => s.setPricePerMeter)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
   const reset = useGangSheetStore((s) => s.reset)
@@ -139,17 +139,21 @@ export default function Sidebar({ onClose }: SidebarProps) {
               />
             </div>
             <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
-                Custo/cm² (R$)
+              <Label
+                htmlFor="price-meter"
+                className="truncate"
+                title="Valor por metro linear da folha (R$/m)"
+              >
+                Valor/metro (R$)
               </Label>
               <Input
-                id="cost-cm2"
+                id="price-meter"
                 type="number"
                 min={0}
                 step={0.01}
-                value={costPerCm2 || ''}
+                value={pricePerMeter || ''}
                 placeholder="0.00"
-                onChange={(e) => setCostPerCm2(Number(e.target.value))}
+                onChange={(e) => setPricePerMeter(Number(e.target.value))}
               />
             </div>
           </div>

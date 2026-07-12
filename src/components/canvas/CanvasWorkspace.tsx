@@ -25,7 +25,7 @@ export default function CanvasWorkspace() {
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
+  const pricePerMeter = useGangSheetStore((s) => s.pricePerMeter)
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -136,8 +136,8 @@ export default function CanvasWorkspace() {
             {visiblePages.map((page) => {
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
-              const usedArea = page.items.reduce((sum, it) => sum + it.widthCm * it.heightCm, 0)
-              const pageCost = costPerCm2 > 0 ? usedArea * costPerCm2 : 0
+              // Charged by the linear meter of sheet actually consumed.
+              const pageCost = pricePerMeter > 0 ? (page.usedHeightCm / 100) * pricePerMeter : 0
               return (
                 <div key={page.index} className="flex flex-col">
                   <div className="mb-2 flex w-full items-center justify-between gap-4 rounded-lg border bg-card/70 px-3 py-1.5">
@@ -154,7 +154,10 @@ export default function CanvasWorkspace() {
                         {Math.round(eff * 100)}% aproveitado
                       </Badge>
                       {pageCost > 0 && (
-                        <Badge variant="outline" title="Custo estimado desta página">
+                        <Badge
+                          variant="outline"
+                          title={`Custo desta página: ${(page.usedHeightCm / 100).toFixed(2)}m × valor/metro`}
+                        >
                           R$ {pageCost.toFixed(2)}
                         </Badge>
                       )}

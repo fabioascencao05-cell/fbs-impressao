@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
+import { fabricPlacement } from '@/lib/placement'
 import type { PackedPage } from '@/types'
 
 export interface SelectionInfo {
@@ -55,6 +56,7 @@ export default function CanvasPage({
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
+  const resizeSourceImage = useGangSheetStore((s) => s.resizeSourceImage)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
   const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
@@ -91,18 +93,32 @@ export default function CanvasPage({
 
     const pageIndex = page.index
 
-    // Content-box dims/position in cm, derived from the object's own scale —
-    // works whether the item just loaded or the user is mid-resize.
+    // Footprint dims/position in cm, derived from the object's own scale +
+    // angle — the inverse of fabricPlacement. Works whether the item just
+    // loaded or the user is mid-resize, and for 0° or 90° art alike. The
+    // Fabric object uses a centre origin, so obj.left/top is the image centre.
     const contentRectCm = (obj: TaggedImage) => {
       const box = obj.contentBox
       if (!box) return null
-      const scaleX = obj.scaleX ?? 1
-      const scaleY = obj.scaleY ?? 1
+      const s = obj.scaleX ?? 1
+      const rotated = Math.round(obj.angle ?? 0) % 180 !== 0
+      const natW = obj.width ?? box.contentWidthPx
+      const natH = obj.height ?? box.contentHeightPx
+      // Offset from image centre back to content-box centre (rotates at 90°).
+      const vx = (natW / 2 - (box.contentXPx + box.contentWidthPx / 2)) * s
+      const vy = (natH / 2 - (box.contentYPx + box.contentHeightPx / 2)) * s
+      const centerX = obj.left ?? 0
+      const centerY = obj.top ?? 0
+      const contentCenterX = rotated ? centerX + vy : centerX - vx
+      const contentCenterY = rotated ? centerY - vx : centerY - vy
+      // Footprint = content box, with width/height swapped when turned 90°.
+      const widthPx = (rotated ? box.contentHeightPx : box.contentWidthPx) * s
+      const heightPx = (rotated ? box.contentWidthPx : box.contentHeightPx) * s
       return {
-        widthCm: (box.contentWidthPx * scaleX) / pxPerCm,
-        heightCm: (box.contentHeightPx * scaleY) / pxPerCm,
-        xCm: ((obj.left ?? 0) + box.contentXPx * scaleX) / pxPerCm,
-        yCm: ((obj.top ?? 0) + box.contentYPx * scaleY) / pxPerCm,
+        widthCm: widthPx / pxPerCm,
+        heightCm: heightPx / pxPerCm,
+        xCm: (contentCenterX - widthPx / 2) / pxPerCm,
+        yCm: (contentCenterY - heightPx / 2) / pxPerCm,
       }
     }
 
@@ -161,6 +177,9 @@ export default function CanvasPage({
       clampToSheet(obj)
       const rect = contentRectCm(obj)
       if (!rect) return
+      // The item's size/position before this edit — used to tell a resize
+      // (propagate to all copies) apart from a pure move (this item only).
+      const prev = page.items.find((it) => it.id === obj.itemId)
       updatePlacedItem(pageIndex, obj.itemId, {
         xCm: rect.xCm,
         yCm: rect.yCm,
@@ -168,6 +187,18 @@ export default function CanvasPage({
         heightCm: rect.heightCm,
         angle: obj.angle ?? 0,
       })
+      // If the size changed, this was a resize: every copy of the same source
+      // image (and the queue's "Largura") adopts the new size right away. Use
+      // the upright/natural width so it stays consistent across orientations.
+      if (prev) {
+        const rotated = Math.round(obj.angle ?? 0) % 180 !== 0
+        const naturalWidthCm = rotated ? rect.heightCm : rect.widthCm
+        const prevRotated = Math.round(prev.angle ?? 0) % 180 !== 0
+        const prevNaturalWidthCm = prevRotated ? prev.heightCm : prev.widthCm
+        if (Math.abs(naturalWidthCm - prevNaturalWidthCm) > 0.05) {
+          resizeSourceImage(prev.sourceImageId, naturalWidthCm)
+        }
+      }
     }
 
     canvas.on('selection:created', reportSelection)
@@ -187,20 +218,18 @@ export default function CanvasPage({
     Promise.all(
       page.items.map((item) =>
         fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' }).then((img) => {
-          // item.xCm/yCm/widthCm/heightCm describe the visible content box, not
-          // the whole (possibly padded) file — scale/position the full image so
-          // its content box lands exactly on that rect.
-          const scale = (item.widthCm * pxPerCm) / item.contentWidthPx
-          const fabricLeft = item.xCm * pxPerCm - item.contentXPx * scale
-          const fabricTop = item.yCm * pxPerCm - item.contentYPx * scale
+          // item.xCm/yCm/widthCm/heightCm describe the visible content box's
+          // footprint on the sheet — place the full image (centre origin) so
+          // its content box lands exactly there, correct at 0° or 90°.
+          const pl = fabricPlacement(item, pxPerCm)
           img.set({
-            left: fabricLeft,
-            top: fabricTop,
-            originX: 'left',
-            originY: 'top',
-            angle: item.angle ?? 0,
-            scaleX: scale,
-            scaleY: scale,
+            left: pl.left,
+            top: pl.top,
+            originX: 'center',
+            originY: 'center',
+            angle: pl.angle,
+            scaleX: pl.scale,
+            scaleY: pl.scale,
             selectable: true,
             evented: true,
             cornerColor: '#0ea5e9',
@@ -238,7 +267,7 @@ export default function CanvasPage({
       canvas.off('object:rotating', onRotating)
       canvas.off('object:modified', onModified)
     }
-  }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, updatePlacedItem])
+  }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, updatePlacedItem, resizeSourceImage])
 
   const backgroundStyle = BACKGROUND_PRESETS[sheetBackgroundColor]
     ? { backgroundImage: BACKGROUND_PRESETS[sheetBackgroundColor], backgroundSize: '20px 20px' }
