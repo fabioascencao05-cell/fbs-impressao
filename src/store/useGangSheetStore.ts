@@ -65,7 +65,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       const aspectRatio = box.heightPx / box.widthPx
       // Real-world size at print resolution — never altered/clamped, so the
       // uploaded artwork keeps its exact measure regardless of sheet size.
-      const widthCm = box.widthPx / EXPORT_PX_PER_CM
+      // Rounded to 1 decimal so the sidebar input shows a clean value.
+      const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
       const heightCm = widthCm * aspectRatio
       newImages.push({
         id: crypto.randomUUID(),

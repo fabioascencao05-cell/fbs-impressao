@@ -1,9 +1,10 @@
-import { LayoutGrid, Download, LogOut, X } from 'lucide-react'
+import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@/components/ui/badge'
 import ImageUploadZone from './ImageUploadZone'
 import ImageQueueItem from './ImageQueueItem'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
@@ -29,14 +30,21 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
+  const reset = useGangSheetStore((s) => s.reset)
   const { signOut } = useAuth()
   const [isExporting, setIsExporting] = useState(false)
 
   const hasLayout = pages.some((p) => p.items.length > 0)
+  const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
 
   const handleGenerateLayout = () => {
     generateLayout()
     onClose?.()
+  }
+
+  const handleClearAll = () => {
+    if (!window.confirm('Remover todas as imagens e o layout gerado?')) return
+    reset()
   }
 
   const handleDownload = async () => {
@@ -65,9 +73,14 @@ export default function Sidebar({ onClose }: SidebarProps) {
   return (
     <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[var(--sidebar-w,340px)]">
       <div className="flex items-center justify-between border-b px-4 py-3">
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold leading-tight">Gang Sheet Builder</h1>
-          <p className="truncate text-xs text-muted-foreground">DTF · empacotamento inteligente</p>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Layers className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold leading-tight">Gang Sheet Builder</h1>
+            <p className="truncate text-xs text-muted-foreground">DTF · empacotamento inteligente</p>
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <ThemeToggle />
@@ -111,39 +124,65 @@ export default function Sidebar({ onClose }: SidebarProps) {
               />
             </div>
           </div>
-          <div className="space-y-0.5">
-            <Label htmlFor="item-gap">Espaçamento entre imagens (cm)</Label>
-            <Input
-              id="item-gap"
-              type="number"
-              min={0}
-              step={0.1}
-              value={itemGapCm}
-              onChange={(e) => setItemGapCm(Number(e.target.value))}
-            />
-          </div>
-          <div className="space-y-0.5">
-            <Label htmlFor="cost-cm2">Custo por cm² (R$)</Label>
-            <Input
-              id="cost-cm2"
-              type="number"
-              min={0}
-              step={0.01}
-              value={costPerCm2 || ''}
-              placeholder="0.00"
-              onChange={(e) => setCostPerCm2(Number(e.target.value))}
-            />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
+                Espaço (cm)
+              </Label>
+              <Input
+                id="item-gap"
+                type="number"
+                min={0}
+                step={0.1}
+                value={itemGapCm}
+                onChange={(e) => setItemGapCm(Number(e.target.value))}
+              />
+            </div>
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
+                Custo/cm² (R$)
+              </Label>
+              <Input
+                id="cost-cm2"
+                type="number"
+                min={0}
+                step={0.01}
+                value={costPerCm2 || ''}
+                placeholder="0.00"
+                onChange={(e) => setCostPerCm2(Number(e.target.value))}
+              />
+            </div>
           </div>
         </div>
       </div>
 
       <Separator />
 
+      <div className="flex items-center justify-between px-4 pt-3">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Fila
+          {images.length > 0 && <Badge variant="secondary">{images.length}</Badge>}
+        </div>
+        {images.length > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
+            onClick={handleClearAll}
+          >
+            <Trash2 className="h-3 w-3" />
+            Limpar tudo
+          </Button>
+        )}
+      </div>
+
       <ScrollArea className="flex-1 px-4 py-3">
         {images.length === 0 ? (
-          <p className="pt-6 text-center text-xs text-muted-foreground">
-            Nenhuma imagem enviada ainda.
-          </p>
+          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center">
+            <ImageOff className="h-6 w-6 text-muted-foreground/60" />
+            <p className="text-xs font-medium">Nenhuma imagem na fila</p>
+            <p className="text-[11px] text-muted-foreground">Envie artes acima para começar</p>
+          </div>
         ) : (
           <div className="space-y-2">
             {images.map((img) => (
@@ -156,6 +195,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
       <Separator />
 
       <div className="space-y-2 px-4 py-3">
+        {images.length > 0 && (
+          <p className="text-center text-[11px] text-muted-foreground">
+            {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
+          </p>
+        )}
         <Button
           className="glow-primary w-full"
           disabled={images.length === 0}

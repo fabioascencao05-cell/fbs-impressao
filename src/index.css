@@ -70,6 +70,30 @@
     linear-gradient(to bottom, hsl(var(--grid-line)) 1px, transparent 1px);
 }
 
+/* Dot-grid backdrop for the canvas workspace scroll area. */
+.workspace-bg {
+  background-color: hsl(var(--muted) / 0.3);
+  background-image: radial-gradient(hsl(var(--grid-line)) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* Thin scrollbars across the app. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* Frosted-glass panel used for sidebar/toolbar surfaces. */
 .glass-panel {
   background-color: hsl(var(--card) / 0.85);

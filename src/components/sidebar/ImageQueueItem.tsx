@@ -11,7 +11,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
   const removeImage = useGangSheetStore((s) => s.removeImage)
 
   return (
-    <div className="flex min-w-0 gap-3 rounded-lg border p-2.5">
+    <div className="flex min-w-0 gap-3 rounded-lg border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
       <img
         src={image.previewUrl}
         alt={image.file.name}
@@ -59,7 +59,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Altura: {image.heightCm.toFixed(1)} cm (proporcional)
+          Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
         </p>
       </div>
     </div>

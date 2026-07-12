@@ -35,8 +35,8 @@ export default function ImageUploadZone() {
   return (
     <div
       className={cn(
-        'flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors',
-        isDragging ? 'border-primary bg-accent' : 'border-input hover:bg-accent/50'
+        'flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors',
+        isDragging ? 'border-primary bg-accent ring-2 ring-primary/40' : 'border-input hover:bg-accent/50'
       )}
       onClick={() => inputRef.current?.click()}
       onDragOver={(e) => {
@@ -50,7 +50,9 @@ export default function ImageUploadZone() {
         handleFiles(e.dataTransfer.files)
       }}
     >
-      <UploadCloud className="h-6 w-6 text-muted-foreground" />
+      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+        <UploadCloud className="h-4 w-4" />
+      </div>
       <p className="text-sm font-medium">Arraste imagens aqui</p>
       <p className="text-xs text-muted-foreground">PNG, JPG ou WebP · clique para selecionar</p>
       <input
