@@ -39,11 +39,11 @@ export default function CanvasToolbar({
 
   return (
     <div className="glass-panel sticky top-0 z-10 flex flex-wrap items-center gap-2 overflow-x-auto border-b px-4 py-2">
-      <div className="flex shrink-0 items-center gap-1">
+      <div className="flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="h-7 w-7"
           onClick={() => onZoom(zoom - ZOOM_STEP)}
           disabled={zoom <= ZOOM_MIN}
           title="Diminuir zoom"
@@ -54,9 +54,9 @@ export default function CanvasToolbar({
           {Math.round(zoom * 100)}%
         </span>
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="h-7 w-7"
           onClick={() => onZoom(zoom + ZOOM_STEP)}
           disabled={zoom >= ZOOM_MAX}
           title="Aumentar zoom"
@@ -64,9 +64,9 @@ export default function CanvasToolbar({
           <ZoomIn className="h-4 w-4" />
         </Button>
         <Button
-          variant="outline"
+          variant="ghost"
           size="icon"
-          className="h-8 w-8"
+          className="h-7 w-7"
           onClick={onZoomFit}
           title="Ajustar à tela"
         >
@@ -76,7 +76,11 @@ export default function CanvasToolbar({
 
       <Separator orientation="vertical" className="h-6" />
 
-      <div className="flex items-center gap-1" title="Cor de fundo da folha (só visual, exportação continua transparente)">
+      <div
+        className="flex items-center gap-1.5"
+        title="Cor de fundo da folha (só visual, exportação continua transparente)"
+      >
+        <span className="text-[11px] text-muted-foreground">Fundo</span>
         {BG_PRESETS.map((preset) => (
           <button
             key={preset.value}

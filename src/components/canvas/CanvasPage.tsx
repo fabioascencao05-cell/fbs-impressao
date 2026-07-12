@@ -246,7 +246,7 @@ export default function CanvasPage({
 
   return (
     <div
-      className="gang-canvas-grid relative border shadow-sm"
+      className="gang-canvas-grid relative border"
       style={{
         width: widthPx,
         height: heightPx,

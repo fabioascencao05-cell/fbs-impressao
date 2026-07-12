@@ -59,7 +59,7 @@ export default function AppLayout() {
       )}
 
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[340px] transition-transform duration-200 md:static md:z-auto md:max-w-none md:translate-x-0 md:transition-none ${
+        className={`fixed inset-y-0 left-0 z-50 w-[85vw] max-w-[340px] transition-transform duration-200 md:static md:z-auto md:w-auto md:max-w-none md:translate-x-0 md:transition-none ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{ ['--sidebar-w' as string]: `${sidebarWidth}px` }}
