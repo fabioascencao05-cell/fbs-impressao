@@ -37,8 +37,41 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
 
+  // Totals across every generated sheet, for the layout summary below.
+  const placedItems = pages.reduce((n, p) => n + p.items.length, 0)
+  const sheetCount = pages.filter((p) => p.items.length > 0).length
+  const totalAreaCm2 = pages.reduce(
+    (sum, p) => sum + p.items.reduce((s, it) => s + it.widthCm * it.heightCm, 0),
+    0
+  )
+  const totalCost = costPerCm2 > 0 ? totalAreaCm2 * costPerCm2 : 0
+
   const handleGenerateLayout = () => {
+    // An art fits the sheet if it fits upright or turned 90°; anything larger
+    // than that on both orientations would overflow, so warn before packing.
+    const fitsSheet = (w: number, h: number) =>
+      (w <= canvasWidthCm && h <= maxHeightCm) || (h <= canvasWidthCm && w <= maxHeightCm)
+    const oversized = images.filter((img) => !fitsSheet(img.widthCm, img.heightCm))
+
     generateLayout()
+
+    const generatedSheets = useGangSheetStore
+      .getState()
+      .pages.filter((p) => p.items.length > 0).length
+    if (generatedSheets > 0) {
+      toast({
+        title: 'Layout gerado',
+        description: `${totalUnits} cópia(s) empacotada(s) em ${generatedSheets} folha(s).`,
+      })
+    }
+    if (oversized.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: `${oversized.length} arte(s) maior(es) que a folha`,
+        description: `Reduza a largura ou aumente a folha (${canvasWidthCm}×${maxHeightCm}cm) — arte(s) maior(es) transbordam.`,
+      })
+    }
+
     onClose?.()
   }
 
@@ -198,6 +231,12 @@ export default function Sidebar({ onClose }: SidebarProps) {
         {images.length > 0 && (
           <p className="text-center text-[11px] text-muted-foreground">
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
+          </p>
+        )}
+        {hasLayout && (
+          <p className="text-center text-[11px] font-medium text-foreground/80">
+            {sheetCount} folha(s) · {placedItems} arte(s) · {totalAreaCm2.toFixed(0)} cm²
+            {totalCost > 0 ? ` · R$ ${totalCost.toFixed(2)}` : ''}
           </p>
         )}
         <Button
