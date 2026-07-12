@@ -94,6 +94,21 @@
   background: transparent;
 }
 
+/* Number inputs: hide the native up/down spin buttons so the compact
+   sidebar fields (sheet size, gap, cost, quantity, width) have room for up
+   to ~4 digits without clipping. Values stay fully editable by typing; the
+   arrows are redundant on these fields. tabular-nums keeps digits aligned. */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Frosted-glass panel used for sidebar/toolbar surfaces. */
 .glass-panel {
   background-color: hsl(var(--card) / 0.85);
