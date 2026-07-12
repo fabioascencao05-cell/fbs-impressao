@@ -26,6 +26,13 @@ interface PageBucket {
   freeRects: FreeRect[]
 }
 
+interface Placement {
+  bucket: PageBucket
+  x: number
+  y: number
+  rotated: boolean
+}
+
 /**
  * Expands each queued image into `quantity` individual units to be packed
  * onto the gang sheet independently.
@@ -114,46 +121,81 @@ function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
   return pruned
 }
 
-/** Best Short Side Fit: among all free rects that fit, pick the tightest one. */
-function findBestFit(
-  freeRects: FreeRect[],
-  width: number,
-  height: number
-): { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null {
-  let best: { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null = null
+// Two positions are treated as the same "row"/"column" when within this many
+// cm of each other, so tiny float noise doesn't scatter otherwise-aligned art.
+const ALIGN_EPS = 0.05
 
-  const tryFit = (w: number, h: number, rotated: boolean) => {
-    for (const rect of freeRects) {
-      if (rect.width < w || rect.height < h) continue
-      const leftoverW = rect.width - w
-      const leftoverH = rect.height - h
-      const shortSide = Math.min(leftoverW, leftoverH)
-      const longSide = Math.max(leftoverW, leftoverH)
-      if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
-        best = { rect, shortSide, longSide, rotated }
+/**
+ * Bottom-Left-Fill placement for a single orientation (w × h already include
+ * the cutting gap). Among every free rect the piece fits into, it picks the
+ * top-most position, then the left-most, then the tightest leftover area —
+ * so pieces stack into neat, dense rows from the top-left corner instead of
+ * being scattered across the sheet. Returns the chosen top-left corner, or
+ * null if the piece fits nowhere in the given buckets.
+ */
+function findBottomLeftPlacement(buckets: PageBucket[], w: number, h: number, rotated: boolean): Placement | null {
+  let best: Placement | null = null
+  let bestY = Infinity
+  let bestX = Infinity
+  let bestWaste = Infinity
+
+  for (const bucket of buckets) {
+    for (const rect of bucket.freeRects) {
+      if (rect.width + ALIGN_EPS < w || rect.height + ALIGN_EPS < h) continue
+      const waste = (rect.width - w) * (rect.height - h)
+      const y = rect.y
+      const x = rect.x
+      const better =
+        y < bestY - ALIGN_EPS ||
+        (Math.abs(y - bestY) <= ALIGN_EPS && x < bestX - ALIGN_EPS) ||
+        (Math.abs(y - bestY) <= ALIGN_EPS && Math.abs(x - bestX) <= ALIGN_EPS && waste < bestWaste)
+      if (!best || better) {
+        best = { bucket, x, y, rotated }
+        bestY = y
+        bestX = x
+        bestWaste = waste
       }
     }
-  }
-
-  tryFit(width, height, false)
-  if (Math.abs(width - height) > 0.001) {
-    tryFit(height, width, true)
   }
   return best
 }
 
 /**
- * MaxRects bin packing (Best Short Side Fit heuristic):
+ * Finds the best placement for one unit across the given buckets, preferring
+ * the upright orientation. Rotation is only attempted when the piece fits
+ * nowhere upright — so art keeps its natural orientation for clean, readable
+ * rows and only turns sideways when that is what avoids opening a new sheet.
+ */
+function placeUnit(
+  buckets: PageBucket[],
+  widthCm: number,
+  heightCm: number,
+  gap: number
+): { placement: Placement; placedW: number; placedH: number } | null {
+  const upright = findBottomLeftPlacement(buckets, widthCm + gap, heightCm + gap, false)
+  if (upright) return { placement: upright, placedW: widthCm, placedH: heightCm }
+
+  if (Math.abs(widthCm - heightCm) > 0.001) {
+    const turned = findBottomLeftPlacement(buckets, heightCm + gap, widthCm + gap, true)
+    if (turned) return { placement: turned, placedW: heightCm, placedH: widthCm }
+  }
+  return null
+}
+
+/**
+ * MaxRects bin packing with a Bottom-Left-Fill heuristic:
  * - Each page tracks its free rectangular space (starting as the whole
  *   canvasWidthCm × maxHeightCm sheet).
- * - Items are sorted by area (largest first) and placed into whichever
- *   already-open page offers the tightest fit; a new page opens only when
- *   nothing fits anywhere.
+ * - Items are packed on their real artwork size (the trimmed content box, so
+ *   transparent padding never counts) plus the user's manual gap, largest
+ *   first, into the top-most / left-most spot that fits on any open page.
  * - Placing an item splits/prunes the free rectangle list so leftover gaps
- *   next to and below it stay available for smaller items later — unlike
- *   shelf packing, nothing is wasted just because it doesn't share a row.
- * - Rotation is not attempted here; the packer always outputs angle 0 and
- *   rotation stays a manual, on-canvas action.
+ *   next to and below it stay available for smaller items later — nothing is
+ *   wasted just because it doesn't share a row.
+ * - Rotation is a fallback only: a piece stays upright unless it fits nowhere
+ *   upright on the existing pages, in which case turning it 90° may avoid
+ *   opening a new sheet. This keeps layouts dense but predictable instead of
+ *   flipping art arbitrarily.
  */
 export function packImages(
   images: GangImage[],
@@ -175,41 +217,33 @@ export function packImages(
   }
 
   for (const unit of units) {
-    const itemWidth = unit.widthCm
-    const itemHeight = unit.heightCm
-    const occupiedWidth = itemWidth + itemGapCm
-    const occupiedHeight = itemHeight + itemGapCm
+    let result = placeUnit(buckets, unit.widthCm, unit.heightCm, itemGapCm)
 
-    let target: { bucket: PageBucket; rect: FreeRect; rotated: boolean } | null = null
-    let bestShortSide = Infinity
-    let bestLongSide = Infinity
-
-    for (const bucket of buckets) {
-      const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
-      if (!fit) continue
-      if (fit.shortSide < bestShortSide || (fit.shortSide === bestShortSide && fit.longSide < bestLongSide)) {
-        target = { bucket, rect: fit.rect, rotated: fit.rotated }
-        bestShortSide = fit.shortSide
-        bestLongSide = fit.longSide
+    if (!result) {
+      // Nothing fits on the open pages — start a fresh sheet and place there.
+      const bucket = openNewBucket()
+      result = placeUnit([bucket], unit.widthCm, unit.heightCm, itemGapCm)
+      if (!result) {
+        // Larger than the sheet even when turned: anchor it at the origin so
+        // the art is never silently dropped from the layout.
+        result = {
+          placement: { bucket, x: 0, y: 0, rotated: false },
+          placedW: unit.widthCm,
+          placedH: unit.heightCm,
+        }
       }
     }
 
-    if (!target) {
-      const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0], rotated: false }
-    }
-
-    const { bucket, rect, rotated } = target
-    const placedW = rotated ? itemHeight : itemWidth
-    const placedH = rotated ? itemWidth : itemHeight
-    const used: FreeRect = { x: rect.x, y: rect.y, width: placedW + itemGapCm, height: placedH + itemGapCm }
+    const { placement, placedW, placedH } = result
+    const { bucket, x, y, rotated } = placement
+    const used: FreeRect = { x, y, width: placedW + itemGapCm, height: placedH + itemGapCm }
 
     bucket.items.push({
       id: unit.id,
       sourceImageId: unit.sourceImageId,
       previewUrl: unit.previewUrl,
-      xCm: rect.x,
-      yCm: rect.y,
+      xCm: x,
+      yCm: y,
       widthCm: placedW,
       heightCm: placedH,
       angle: rotated ? 90 : 0,
