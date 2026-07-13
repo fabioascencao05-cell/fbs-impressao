@@ -1,5 +1,5 @@
 import { Trash2 } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { NumberField } from '@/components/ui/number-field'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
@@ -36,25 +36,23 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
         <div className="grid grid-cols-2 gap-2">
           <div className="min-w-0 space-y-0.5">
             <Label htmlFor={`qty-${image.id}`}>Quantidade</Label>
-            <Input
+            <NumberField
               id={`qty-${image.id}`}
-              type="number"
               min={1}
               value={image.quantity}
-              onChange={(e) => updateQuantity(image.id, Number(e.target.value))}
+              onCommit={(n) => updateQuantity(image.id, n)}
             />
           </div>
           <div className="min-w-0 space-y-0.5">
             <Label htmlFor={`width-${image.id}`} className="truncate">
               Largura (cm)
             </Label>
-            <Input
+            <NumberField
               id={`width-${image.id}`}
-              type="number"
               min={0.1}
               step={0.1}
               value={image.widthCm}
-              onChange={(e) => updateWidthCm(image.id, Number(e.target.value))}
+              onCommit={(n) => updateWidthCm(image.id, n)}
             />
           </div>
         </div>

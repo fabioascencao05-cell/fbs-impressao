@@ -1,6 +1,6 @@
 import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { NumberField } from '@/components/ui/number-field'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -138,22 +138,20 @@ export default function Sidebar({ onClose }: SidebarProps) {
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-0.5">
               <Label htmlFor="canvas-width">Largura (cm)</Label>
-              <Input
+              <NumberField
                 id="canvas-width"
-                type="number"
                 min={1}
                 value={canvasWidthCm}
-                onChange={(e) => setCanvasWidthCm(Number(e.target.value))}
+                onCommit={setCanvasWidthCm}
               />
             </div>
             <div className="space-y-0.5">
               <Label htmlFor="max-height">Altura Máxima (cm)</Label>
-              <Input
+              <NumberField
                 id="max-height"
-                type="number"
                 min={1}
                 value={maxHeightCm}
-                onChange={(e) => setMaxHeightCm(Number(e.target.value))}
+                onCommit={setMaxHeightCm}
               />
             </div>
           </div>
@@ -162,27 +160,25 @@ export default function Sidebar({ onClose }: SidebarProps) {
               <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
                 Espaço (cm)
               </Label>
-              <Input
+              <NumberField
                 id="item-gap"
-                type="number"
                 min={0}
                 step={0.1}
                 value={itemGapCm}
-                onChange={(e) => setItemGapCm(Number(e.target.value))}
+                onCommit={setItemGapCm}
               />
             </div>
             <div className="min-w-0 space-y-0.5">
               <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
                 Custo/cm² (R$)
               </Label>
-              <Input
+              <NumberField
                 id="cost-cm2"
-                type="number"
                 min={0}
                 step={0.01}
-                value={costPerCm2 || ''}
+                value={costPerCm2}
                 placeholder="0.00"
-                onChange={(e) => setCostPerCm2(Number(e.target.value))}
+                onCommit={setCostPerCm2}
               />
             </div>
           </div>
