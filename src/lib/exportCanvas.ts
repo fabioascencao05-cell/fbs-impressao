@@ -1,5 +1,4 @@
 import * as fabric from 'fabric'
-import JSZip from 'jszip'
 import { EXPORT_PX_PER_CM } from './constants'
 import type { PackedPage } from '@/types'
 
@@ -82,6 +81,9 @@ export async function downloadGangSheets(
     return
   }
 
+  // jszip is only needed for the multi-page bundle, so it stays out of the
+  // main bundle and loads on demand the first time a multi-sheet export runs.
+  const { default: JSZip } = await import('jszip')
   const zip = new JSZip()
   for (const page of nonEmptyPages) {
     const blob = await renderPageToBlob(page, canvasWidthCm, maxHeightCm)
