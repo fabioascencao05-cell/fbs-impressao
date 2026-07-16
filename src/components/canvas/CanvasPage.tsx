@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
@@ -10,6 +10,11 @@ export interface SelectionInfo {
   widthCm: number
   heightCm: number
   angle: number
+}
+
+export interface CanvasPageHandle {
+  /** Rotates the currently selected art (if any) 90° clockwise. */
+  rotateSelected: () => void
 }
 
 interface CanvasPageProps {
@@ -45,13 +50,10 @@ const BACKGROUND_PRESETS: Record<string, string> = {
     'conic-gradient(#e5e5e5 0deg 90deg, #ffffff 90deg 180deg, #e5e5e5 180deg 270deg, #ffffff 270deg 360deg)',
 }
 
-export default function CanvasPage({
-  page,
-  canvasWidthCm,
-  maxHeightCm,
-  pxPerCm,
-  onSelectionChange,
-}: CanvasPageProps) {
+export default forwardRef<CanvasPageHandle, CanvasPageProps>(function CanvasPage(
+  { page, canvasWidthCm, maxHeightCm, pxPerCm, onSelectionChange },
+  ref
+) {
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
@@ -59,6 +61,14 @@ export default function CanvasPage({
   const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
   const [hud, setHud] = useState<HudInfo | null>(null)
+  // Rotation handler is (re)assigned every effect run so the imperative
+  // handle always calls the current closure's clamp/report/update helpers —
+  // the exact same code path a manual drag-rotate already uses.
+  const rotateHandlerRef = useRef<() => void>(() => {})
+
+  useImperativeHandle(ref, () => ({
+    rotateSelected: () => rotateHandlerRef.current(),
+  }))
 
   const widthPx = canvasWidthCm * pxPerCm
   const heightPx = maxHeightCm * pxPerCm
@@ -168,6 +178,16 @@ export default function CanvasPage({
         heightCm: rect.heightCm,
         angle: obj.angle ?? 0,
       })
+    }
+
+    rotateHandlerRef.current = () => {
+      const obj = canvas.getActiveObject() as TaggedImage | undefined
+      if (!obj?.itemId) return
+      obj.rotate(((obj.angle ?? 0) + 90) % 360)
+      clampToSheet(obj)
+      canvas.requestRenderAll()
+      onModified({ target: obj })
+      reportSelection()
     }
 
     canvas.on('selection:created', reportSelection)
@@ -302,4 +322,4 @@ export default function CanvasPage({
       )}
     </div>
   )
-}
+})

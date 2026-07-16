@@ -1,6 +1,6 @@
 import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { NumberField } from '@/components/ui/number-field'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -37,8 +37,41 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
 
+  // Totals across every generated sheet, for the layout summary below.
+  const placedItems = pages.reduce((n, p) => n + p.items.length, 0)
+  const sheetCount = pages.filter((p) => p.items.length > 0).length
+  const totalAreaCm2 = pages.reduce(
+    (sum, p) => sum + p.items.reduce((s, it) => s + it.widthCm * it.heightCm, 0),
+    0
+  )
+  const totalCost = costPerCm2 > 0 ? totalAreaCm2 * costPerCm2 : 0
+
   const handleGenerateLayout = () => {
+    // An art fits the sheet if it fits upright or turned 90°; anything larger
+    // than that on both orientations would overflow, so warn before packing.
+    const fitsSheet = (w: number, h: number) =>
+      (w <= canvasWidthCm && h <= maxHeightCm) || (h <= canvasWidthCm && w <= maxHeightCm)
+    const oversized = images.filter((img) => !fitsSheet(img.widthCm, img.heightCm))
+
     generateLayout()
+
+    const generatedSheets = useGangSheetStore
+      .getState()
+      .pages.filter((p) => p.items.length > 0).length
+    if (generatedSheets > 0) {
+      toast({
+        title: 'Layout gerado',
+        description: `${totalUnits} cópia(s) empacotada(s) em ${generatedSheets} folha(s).`,
+      })
+    }
+    if (oversized.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: `${oversized.length} arte(s) maior(es) que a folha`,
+        description: `Reduza a largura ou aumente a folha (${canvasWidthCm}×${maxHeightCm}cm) — arte(s) maior(es) transbordam.`,
+      })
+    }
+
     onClose?.()
   }
 
@@ -105,22 +138,20 @@ export default function Sidebar({ onClose }: SidebarProps) {
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-0.5">
               <Label htmlFor="canvas-width">Largura (cm)</Label>
-              <Input
+              <NumberField
                 id="canvas-width"
-                type="number"
                 min={1}
                 value={canvasWidthCm}
-                onChange={(e) => setCanvasWidthCm(Number(e.target.value))}
+                onCommit={setCanvasWidthCm}
               />
             </div>
             <div className="space-y-0.5">
               <Label htmlFor="max-height">Altura Máxima (cm)</Label>
-              <Input
+              <NumberField
                 id="max-height"
-                type="number"
                 min={1}
                 value={maxHeightCm}
-                onChange={(e) => setMaxHeightCm(Number(e.target.value))}
+                onCommit={setMaxHeightCm}
               />
             </div>
           </div>
@@ -129,27 +160,25 @@ export default function Sidebar({ onClose }: SidebarProps) {
               <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
                 Espaço (cm)
               </Label>
-              <Input
+              <NumberField
                 id="item-gap"
-                type="number"
                 min={0}
                 step={0.1}
                 value={itemGapCm}
-                onChange={(e) => setItemGapCm(Number(e.target.value))}
+                onCommit={setItemGapCm}
               />
             </div>
             <div className="min-w-0 space-y-0.5">
               <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
                 Custo/cm² (R$)
               </Label>
-              <Input
+              <NumberField
                 id="cost-cm2"
-                type="number"
                 min={0}
                 step={0.01}
-                value={costPerCm2 || ''}
+                value={costPerCm2}
                 placeholder="0.00"
-                onChange={(e) => setCostPerCm2(Number(e.target.value))}
+                onCommit={setCostPerCm2}
               />
             </div>
           </div>
@@ -198,6 +227,12 @@ export default function Sidebar({ onClose }: SidebarProps) {
         {images.length > 0 && (
           <p className="text-center text-[11px] text-muted-foreground">
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
+          </p>
+        )}
+        {hasLayout && (
+          <p className="text-center text-[11px] font-medium text-foreground/80">
+            {sheetCount} folha(s) · {placedItems} arte(s) · {totalAreaCm2.toFixed(0)} cm²
+            {totalCost > 0 ? ` · R$ ${totalCost.toFixed(2)}` : ''}
           </p>
         )}
         <Button

@@ -5,7 +5,7 @@ import { DISPLAY_PX_PER_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import Ruler from './Ruler'
-import CanvasPage, { type SelectionInfo } from './CanvasPage'
+import CanvasPage, { type CanvasPageHandle, type SelectionInfo } from './CanvasPage'
 import CanvasToolbar from './CanvasToolbar'
 import type { PackedPage } from '@/types'
 
@@ -30,6 +30,7 @@ export default function CanvasWorkspace() {
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const hadPagesRef = useRef(false)
+  const pageHandlesRef = useRef<Map<number, CanvasPageHandle>>(new Map())
 
   const pxPerCm = DISPLAY_PX_PER_CM * zoom
   const visiblePages = useMemo(() => pages.filter((p) => p.items.length > 0), [pages])
@@ -54,6 +55,11 @@ export default function CanvasWorkspace() {
     generateLayout()
     setSelection(null)
   }, [generateLayout])
+
+  const handleRotateSelected = useCallback(() => {
+    if (!selection) return
+    pageHandlesRef.current.get(selection.pageIndex)?.rotateSelected()
+  }, [selection])
 
   const handleZoomFit = useCallback(() => {
     const el = scrollRef.current
@@ -95,6 +101,7 @@ export default function CanvasWorkspace() {
           selection={selection}
           onDeleteSelected={handleDeleteSelected}
           onRegenerate={handleRegenerate}
+          onRotateSelected={handleRotateSelected}
         />
       )}
 
@@ -172,6 +179,10 @@ export default function CanvasWorkspace() {
                   <div className="flex flex-col shadow-lg ring-1 ring-black/10 dark:ring-white/10">
                     <Ruler orientation="horizontal" lengthCm={canvasWidthCm} pxPerCm={pxPerCm} />
                     <CanvasPage
+                      ref={(el) => {
+                        if (el) pageHandlesRef.current.set(page.index, el)
+                        else pageHandlesRef.current.delete(page.index)
+                      }}
                       page={page}
                       canvasWidthCm={canvasWidthCm}
                       maxHeightCm={maxHeightCm}

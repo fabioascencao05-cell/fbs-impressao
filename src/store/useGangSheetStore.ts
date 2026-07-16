@@ -168,11 +168,15 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         if (page.index !== pageIndex) return page
         const source = page.items.find((it) => it.id === itemId)
         if (!source) return page
+        // Offset the copy slightly, but keep its content box inside the sheet
+        // so a duplicate made near an edge never lands off the printable area.
+        const maxX = Math.max(0, state.canvasWidthCm - source.widthCm)
+        const maxY = Math.max(0, state.maxHeightCm - source.heightCm)
         const clone: PlacedItem = {
           ...source,
           id: `${source.sourceImageId}-dup-${Date.now()}`,
-          xCm: source.xCm + 1,
-          yCm: source.yCm + 1,
+          xCm: Math.min(source.xCm + 1, maxX),
+          yCm: Math.min(source.yCm + 1, maxY),
         }
         const items = [...page.items, clone]
         const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
