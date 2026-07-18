@@ -52,6 +52,7 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'ui-sans-serif', 'sans-serif'],
+        display: ['Space Grotesk', 'Inter', 'system-ui', 'sans-serif'],
       },
     },
   },

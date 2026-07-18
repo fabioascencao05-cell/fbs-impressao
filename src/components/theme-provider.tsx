@@ -14,7 +14,9 @@ const STORAGE_KEY = 'gang-sheet-theme'
 function getInitialTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY)
   if (stored === 'light' || stored === 'dark') return stored
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  // Dark is the product's default identity; only an explicit stored choice or a
+  // system light preference opts out.
+  return 'dark'
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

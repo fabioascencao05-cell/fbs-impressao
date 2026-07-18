@@ -1,11 +1,15 @@
 import { create } from 'zustand'
 import { packImages } from '@/lib/binPacking'
-import { computeContentBox } from '@/lib/trimImage'
+import { packImagesByShape, type PackUnitInput } from '@/lib/shapePacking'
+import type { PackRequest, PackResponse } from '@/lib/packWorker'
+import { computeArtGeometry } from '@/lib/trimImage'
+import { usedLengthCm } from '@/lib/placedGeometry'
 import { releaseImageElement } from '@/lib/imageCache'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
   DEFAULT_MAX_HEIGHT_CM,
+  DEFAULT_PRICE_PER_METER,
   EXPORT_PX_PER_CM,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -13,6 +17,13 @@ import {
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const PRICE_STORAGE_KEY = 'gang-sheet-price-per-meter'
+
+function loadPrice(): number {
+  const raw = localStorage.getItem(PRICE_STORAGE_KEY)
+  const n = raw ? Number(raw) : NaN
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_PRICE_PER_METER
+}
 
 interface GangSheetState {
   images: GangImage[]
@@ -22,7 +33,9 @@ interface GangSheetState {
   pages: PackedPage[]
   zoom: number
   sheetBackgroundColor: string
-  costPerCm2: number
+  pricePerLinearMeter: number
+  isPacking: boolean
+  packProgress: number // 0..1
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -31,19 +44,81 @@ interface GangSheetState {
   setMaxHeightCm: (heightCm: number) => void
   setCanvasWidthCm: (widthCm: number) => void
   setItemGapCm: (gapCm: number) => void
-  generateLayout: () => void
+  generateLayout: () => Promise<void>
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
   duplicatePlacedItem: (pageIndex: number, itemId: string) => void
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
-  setCostPerCm2: (cost: number) => void
+  setPricePerLinearMeter: (price: number) => void
   reset: () => void
 }
 
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+}
+
+function toPackUnits(images: GangImage[]): PackUnitInput[] {
+  return images.map((img) => ({
+    id: img.id,
+    sourceImageId: img.id,
+    previewUrl: img.previewUrl,
+    widthCm: img.widthCm,
+    heightCm: img.heightCm,
+    contentXPx: img.contentXPx,
+    contentYPx: img.contentYPx,
+    contentWidthPx: img.contentWidthPx,
+    contentHeightPx: img.contentHeightPx,
+    naturalWidthPx: img.naturalWidthPx,
+    naturalHeightPx: img.naturalHeightPx,
+    quantity: img.quantity,
+    mask: img.mask
+      ? {
+          cols: img.mask.cols,
+          rows: img.mask.rows,
+          // Copy so the transfer/clone to the worker never detaches the store's buffer.
+          data: Uint8Array.from(img.mask.data),
+          hasAlpha: img.mask.hasAlpha,
+        }
+      : undefined,
+  }))
+}
+
+/** Runs the shape packer in a Web Worker; resolves null if the worker is unusable. */
+function packInWorker(
+  units: PackUnitInput[],
+  options: { maxHeightCm: number; canvasWidthCm: number; itemGapCm: number },
+  onProgress: (p: number) => void
+): Promise<PackedPage[] | null> {
+  return new Promise((resolve) => {
+    let worker: Worker
+    try {
+      worker = new Worker(new URL('../lib/packWorker.ts', import.meta.url), { type: 'module' })
+    } catch {
+      resolve(null)
+      return
+    }
+    const cleanup = () => worker.terminate()
+    worker.onmessage = (e: MessageEvent<PackResponse>) => {
+      const msg = e.data
+      if (msg.type === 'progress') {
+        onProgress(msg.total > 0 ? msg.done / msg.total : 0)
+      } else if (msg.type === 'done') {
+        cleanup()
+        resolve(msg.pages)
+      } else {
+        cleanup()
+        resolve(null)
+      }
+    }
+    worker.onerror = () => {
+      cleanup()
+      resolve(null)
+    }
+    const req: PackRequest = { units, options, useShape: true }
+    worker.postMessage(req)
+  })
 }
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
@@ -53,22 +128,19 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   itemGapCm: DEFAULT_ITEM_GAP_CM,
   pages: [],
   zoom: 1,
-  sheetBackgroundColor: '#ffffff',
-  costPerCm2: 0,
+  sheetBackgroundColor: 'checkerboard',
+  pricePerLinearMeter: loadPrice(),
+  isPacking: false,
+  packProgress: 0,
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
     const skipped = files.length - accepted.length
 
-    // Decode/scan every file in parallel — sequential awaits made large batches
-    // needlessly slow. Order is preserved by Promise.all.
     const newImages = await Promise.all(
       accepted.map(async (file): Promise<GangImage> => {
-        const box = await computeContentBox(file)
+        const { box, mask } = await computeArtGeometry(file)
         const aspectRatio = box.heightPx / box.widthPx
-        // Real-world size at print resolution — never altered/clamped, so the
-        // uploaded artwork keeps its exact measure regardless of sheet size.
-        // Rounded to 1 decimal so the sidebar input shows a clean value.
         const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
         const heightCm = widthCm * aspectRatio
         return {
@@ -85,6 +157,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
           contentYPx: box.yPx,
           contentWidthPx: box.widthPx,
           contentHeightPx: box.heightPx,
+          mask,
         }
       })
     )
@@ -102,7 +175,6 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       }
       return {
         images: state.images.filter((img) => img.id !== id),
-        // Drop any placed instances of the removed source image from the layout.
         pages: state.pages.map((page) => ({
           ...page,
           items: page.items.filter((it) => it.sourceImageId !== id),
@@ -122,9 +194,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   updateWidthCm: (id, widthCm) => {
     set((state) => ({
       images: state.images.map((img) =>
-        img.id === id && widthCm > 0
-          ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
-          : img
+        img.id === id && widthCm > 0 ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio } : img
       ),
     }))
   },
@@ -141,10 +211,38 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     set({ itemGapCm: Math.max(0, gapCm) })
   },
 
-  generateLayout: () => {
+  generateLayout: async () => {
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
-    set({ pages })
+    if (images.length === 0) {
+      set({ pages: [] })
+      return
+    }
+
+    set({ isPacking: true, packProgress: 0 })
+    const options = { maxHeightCm, canvasWidthCm, itemGapCm }
+    const units = toPackUnits(images)
+
+    try {
+      // Preferred path: shape-aware packing off the main thread.
+      const workerPages = await packInWorker(units, options, (p) => set({ packProgress: p }))
+      if (workerPages) {
+        set({ pages: workerPages })
+        return
+      }
+      // Fallback 1: run the shape packer synchronously (worker unavailable).
+      try {
+        const pages = packImagesByShape(units, options, (p) =>
+          set({ packProgress: p.total ? p.done / p.total : 0 })
+        )
+        set({ pages })
+        return
+      } catch {
+        // Fallback 2: legacy rectangular MaxRects packer.
+        set({ pages: packImages(images, maxHeightCm, canvasWidthCm, itemGapCm) })
+      }
+    } finally {
+      set({ isPacking: false, packProgress: 1 })
+    }
   },
 
   updatePlacedItem: (pageIndex, itemId, patch) => {
@@ -152,8 +250,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
         const items = page.items.map((it) => (it.id === itemId ? { ...it, ...patch } : it))
-        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
-        return { ...page, items, usedHeightCm }
+        return { ...page, items, usedHeightCm: usedLengthCm(items) }
       }),
     }))
   },
@@ -163,8 +260,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
         const items = page.items.filter((it) => it.id !== itemId)
-        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
-        return { ...page, items, usedHeightCm }
+        return { ...page, items, usedHeightCm: usedLengthCm(items) }
       }),
     }))
   },
@@ -177,15 +273,12 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         if (!source) return page
         const clone: PlacedItem = {
           ...source,
-          // Unique even when duplicating twice within the same millisecond;
-          // Date.now()-based ids could collide and break React keys / selection.
           id: `${source.sourceImageId}-dup-${crypto.randomUUID()}`,
           xCm: source.xCm + 1,
           yCm: source.yCm + 1,
         }
         const items = [...page.items, clone]
-        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
-        return { ...page, items, usedHeightCm }
+        return { ...page, items, usedHeightCm: usedLengthCm(items) }
       }),
     }))
   },
@@ -202,7 +295,11 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
+  setPricePerLinearMeter: (price) => {
+    const clamped = Math.max(0, price || 0)
+    localStorage.setItem(PRICE_STORAGE_KEY, String(clamped))
+    set({ pricePerLinearMeter: clamped })
+  },
 
   reset: () => {
     set((state) => {
@@ -217,6 +314,5 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
 // Dev-only handle for automated end-to-end testing of layout/export.
 if (import.meta.env.DEV) {
-  ;(window as unknown as { __gangStore?: typeof useGangSheetStore }).__gangStore =
-    useGangSheetStore
+  ;(window as unknown as { __gangStore?: typeof useGangSheetStore }).__gangStore = useGangSheetStore
 }

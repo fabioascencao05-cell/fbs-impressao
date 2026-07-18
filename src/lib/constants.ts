@@ -14,6 +14,9 @@ export const DEFAULT_ITEM_GAP_CM = 0.3
 
 export const DEFAULT_MAX_HEIGHT_CM = 100
 
+// Default price of one linear meter of DTF film (R$), user-editable & persisted.
+export const DEFAULT_PRICE_PER_METER = 0
+
 // Interactive canvas zoom bounds (multiplies DISPLAY_PX_PER_CM).
 export const ZOOM_MIN = 0.4
 export const ZOOM_MAX = 2.5
