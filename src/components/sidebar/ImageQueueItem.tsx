@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Trash2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -5,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import type { GangImage } from '@/types'
 
-export default function ImageQueueItem({ image }: { image: GangImage }) {
+function ImageQueueItem({ image }: { image: GangImage }) {
   const updateQuantity = useGangSheetStore((s) => s.updateQuantity)
   const updateWidthCm = useGangSheetStore((s) => s.updateWidthCm)
   const removeImage = useGangSheetStore((s) => s.removeImage)
@@ -65,3 +66,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
     </div>
   )
 }
+
+// Each queue row only depends on its own image; memoizing keeps the whole list
+// from re-rendering when an unrelated row's quantity/width changes.
+export default memo(ImageQueueItem)

@@ -76,6 +76,11 @@ export default function CanvasWorkspace() {
   // Delete key removes the selected art.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack Delete while the user is editing a form field (quantity,
+      // width, sheet size, etc.) — it should delete text, not the selected art.
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el?.isContentEditable) return
       if (e.key === 'Delete' && selection) {
         e.preventDefault()
         handleDeleteSelected()

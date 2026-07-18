@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { DISPLAY_PX_PER_CM } from '@/lib/constants'
 
 interface RulerProps {
@@ -6,7 +7,7 @@ interface RulerProps {
   pxPerCm?: number
 }
 
-export default function Ruler({ orientation, lengthCm, pxPerCm = DISPLAY_PX_PER_CM }: RulerProps) {
+function Ruler({ orientation, lengthCm, pxPerCm = DISPLAY_PX_PER_CM }: RulerProps) {
   const marks = Array.from({ length: Math.floor(lengthCm) + 1 }, (_, i) => i)
   const isHorizontal = orientation === 'horizontal'
 
@@ -53,3 +54,5 @@ export default function Ruler({ orientation, lengthCm, pxPerCm = DISPLAY_PX_PER_
     </div>
   )
 }
+
+export default memo(Ruler)

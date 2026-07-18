@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { packImages } from '@/lib/binPacking'
 import { computeContentBox } from '@/lib/trimImage'
+import { releaseImageElement } from '@/lib/imageCache'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
@@ -58,32 +59,35 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
     const skipped = files.length - accepted.length
-    const newImages: GangImage[] = []
 
-    for (const file of accepted) {
-      const box = await computeContentBox(file)
-      const aspectRatio = box.heightPx / box.widthPx
-      // Real-world size at print resolution — never altered/clamped, so the
-      // uploaded artwork keeps its exact measure regardless of sheet size.
-      // Rounded to 1 decimal so the sidebar input shows a clean value.
-      const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
-      const heightCm = widthCm * aspectRatio
-      newImages.push({
-        id: crypto.randomUUID(),
-        file,
-        previewUrl: URL.createObjectURL(file),
-        naturalWidthPx: box.naturalWidthPx,
-        naturalHeightPx: box.naturalHeightPx,
-        aspectRatio,
-        quantity: 1,
-        widthCm,
-        heightCm,
-        contentXPx: box.xPx,
-        contentYPx: box.yPx,
-        contentWidthPx: box.widthPx,
-        contentHeightPx: box.heightPx,
+    // Decode/scan every file in parallel — sequential awaits made large batches
+    // needlessly slow. Order is preserved by Promise.all.
+    const newImages = await Promise.all(
+      accepted.map(async (file): Promise<GangImage> => {
+        const box = await computeContentBox(file)
+        const aspectRatio = box.heightPx / box.widthPx
+        // Real-world size at print resolution — never altered/clamped, so the
+        // uploaded artwork keeps its exact measure regardless of sheet size.
+        // Rounded to 1 decimal so the sidebar input shows a clean value.
+        const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
+        const heightCm = widthCm * aspectRatio
+        return {
+          id: crypto.randomUUID(),
+          file,
+          previewUrl: URL.createObjectURL(file),
+          naturalWidthPx: box.naturalWidthPx,
+          naturalHeightPx: box.naturalHeightPx,
+          aspectRatio,
+          quantity: 1,
+          widthCm,
+          heightCm,
+          contentXPx: box.xPx,
+          contentYPx: box.yPx,
+          contentWidthPx: box.widthPx,
+          contentHeightPx: box.heightPx,
+        }
       })
-    }
+    )
 
     set((state) => ({ images: [...state.images, ...newImages] }))
     return { added: accepted.length, skipped }
@@ -92,7 +96,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   removeImage: (id) => {
     set((state) => {
       const target = state.images.find((img) => img.id === id)
-      if (target) URL.revokeObjectURL(target.previewUrl)
+      if (target) {
+        releaseImageElement(target.previewUrl)
+        URL.revokeObjectURL(target.previewUrl)
+      }
       return {
         images: state.images.filter((img) => img.id !== id),
         // Drop any placed instances of the removed source image from the layout.
@@ -170,7 +177,9 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         if (!source) return page
         const clone: PlacedItem = {
           ...source,
-          id: `${source.sourceImageId}-dup-${Date.now()}`,
+          // Unique even when duplicating twice within the same millisecond;
+          // Date.now()-based ids could collide and break React keys / selection.
+          id: `${source.sourceImageId}-dup-${crypto.randomUUID()}`,
           xCm: source.xCm + 1,
           yCm: source.yCm + 1,
         }
@@ -197,7 +206,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   reset: () => {
     set((state) => {
-      state.images.forEach((img) => URL.revokeObjectURL(img.previewUrl))
+      state.images.forEach((img) => {
+        releaseImageElement(img.previewUrl)
+        URL.revokeObjectURL(img.previewUrl)
+      })
       return { images: [], pages: [] }
     })
   },
