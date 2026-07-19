@@ -14,7 +14,7 @@ import {
   ZOOM_MAX,
   ZOOM_MIN,
 } from '@/lib/constants'
-import type { GangImage, PackedPage, PlacedItem } from '@/types'
+import type { GangImage, PackedPage, PackResult, PlacedItem, UnfitArt } from '@/types'
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const PRICE_STORAGE_KEY = 'gang-sheet-price-per-meter'
@@ -36,6 +36,7 @@ interface GangSheetState {
   pricePerLinearMeter: number
   isPacking: boolean
   packProgress: number // 0..1
+  unfitArts: UnfitArt[]
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -64,6 +65,7 @@ function toPackUnits(images: GangImage[]): PackUnitInput[] {
     id: img.id,
     sourceImageId: img.id,
     previewUrl: img.previewUrl,
+    label: img.file.name,
     widthCm: img.widthCm,
     heightCm: img.heightCm,
     contentXPx: img.contentXPx,
@@ -90,7 +92,7 @@ function packInWorker(
   units: PackUnitInput[],
   options: { maxHeightCm: number; canvasWidthCm: number; itemGapCm: number },
   onProgress: (p: number) => void
-): Promise<PackedPage[] | null> {
+): Promise<PackResult | null> {
   return new Promise((resolve) => {
     let worker: Worker
     try {
@@ -106,7 +108,7 @@ function packInWorker(
         onProgress(msg.total > 0 ? msg.done / msg.total : 0)
       } else if (msg.type === 'done') {
         cleanup()
-        resolve(msg.pages)
+        resolve(msg.result)
       } else {
         cleanup()
         resolve(null)
@@ -132,6 +134,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pricePerLinearMeter: loadPrice(),
   isPacking: false,
   packProgress: 0,
+  unfitArts: [],
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
@@ -214,7 +217,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   generateLayout: async () => {
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
     if (images.length === 0) {
-      set({ pages: [] })
+      set({ pages: [], unfitArts: [] })
       return
     }
 
@@ -222,23 +225,26 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     const options = { maxHeightCm, canvasWidthCm, itemGapCm }
     const units = toPackUnits(images)
 
+    const apply = (result: PackResult) => set({ pages: result.pages, unfitArts: result.unfit })
+
     try {
       // Preferred path: shape-aware packing off the main thread.
-      const workerPages = await packInWorker(units, options, (p) => set({ packProgress: p }))
-      if (workerPages) {
-        set({ pages: workerPages })
+      const workerResult = await packInWorker(units, options, (p) => set({ packProgress: p }))
+      if (workerResult) {
+        apply(workerResult)
         return
       }
       // Fallback 1: run the shape packer synchronously (worker unavailable).
       try {
-        const pages = packImagesByShape(units, options, (p) =>
-          set({ packProgress: p.total ? p.done / p.total : 0 })
+        apply(
+          packImagesByShape(units, options, (p) =>
+            set({ packProgress: p.total ? p.done / p.total : 0 })
+          )
         )
-        set({ pages })
         return
       } catch {
         // Fallback 2: legacy rectangular MaxRects packer.
-        set({ pages: packImages(images, maxHeightCm, canvasWidthCm, itemGapCm) })
+        apply(packImages(images, maxHeightCm, canvasWidthCm, itemGapCm))
       }
     } finally {
       set({ isPacking: false, packProgress: 1 })

@@ -1,4 +1,4 @@
-import type { PackedPage, PlacedItem } from '@/types'
+import type { PackResult, PlacedItem } from '@/types'
 import { usedLengthCm } from './placedGeometry'
 
 /**
@@ -27,6 +27,7 @@ export interface PackUnitInput {
   id: string
   sourceImageId: string
   previewUrl: string
+  label: string
   widthCm: number
   heightCm: number
   contentXPx: number
@@ -346,16 +347,37 @@ export interface PackProgress {
 }
 
 /**
- * Runs the shape packer. `onProgress` is called as arts are placed so the UI can
- * show a determinate indicator. `useShape=false` forces rectangle footprints
- * (automatic fallback path).
+ * Hard invariant: the packer may ONLY change an art's position and rotation —
+ * never its size. This asserts the emitted item keeps the exact user-defined
+ * dimensions of its source unit; a mismatch is a bug, not something to paper over.
+ */
+function assertNoResize(unit: PackUnitInput, item: PlacedItem): void {
+  if (item.widthCm !== unit.widthCm || item.heightCm !== unit.heightCm) {
+    throw new Error(
+      `Packer alterou o tamanho da arte "${unit.label}" ` +
+        `(${unit.widthCm}x${unit.heightCm} -> ${item.widthCm}x${item.heightCm}). Isso é proibido.`
+    )
+  }
+}
+
+/** True if any orientation's footprint fits inside an empty sheet grid. */
+function fitsSheet(footprints: Footprint[], gridCols: number, gridRows: number): boolean {
+  return footprints.some((fp) => fp.cols <= gridCols && fp.rows <= gridRows)
+}
+
+/**
+ * Runs the shape packer. The art is NEVER resized to fit — an art that cannot
+ * fit the sheet at its user-defined size (in any rotation) is returned in
+ * `unfit` for the UI to warn about, rather than being scaled down or placed
+ * overflowing the page. `onProgress` drives a determinate indicator;
+ * `useShape=false` forces rectangle footprints (automatic fallback path).
  */
 export function packImagesByShape(
   units: PackUnitInput[],
   opts: PackOptions,
   onProgress?: (p: PackProgress) => void,
   useShape = true
-): PackedPage[] {
+): PackResult {
   const expanded = expandQueue(units).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
   const total = expanded.length
 
@@ -374,34 +396,51 @@ export function packImagesByShape(
     return p
   }
 
+  const unfit: PackResult['unfit'] = []
+  const unfitSeen = new Set<string>()
+
+  const place = (page: { grid: Grid; items: PlacedItem[] }, unit: PackUnitInput, hit: { fp: Footprint; x: number; y: number }) => {
+    stamp(page.grid, hit.fp, hit.x, hit.y)
+    const item = toPlacedItem(unit, hit.fp, hit.x, hit.y)
+    assertNoResize(unit, item)
+    page.items.push(item)
+  }
+
   let done = 0
   for (const unit of expanded) {
-    // Footprints for this art in each orientation (skip mirror-equivalents for
-    // square-ish masks to save time by only trying 0/90 when close to square).
     const angles: (0 | 90 | 180 | 270)[] = [0, 90, 180, 270]
     const footprints = angles.map((a) => buildFootprint(unit, a, dCells, useShape))
+
+    // Guard: too big for the sheet even alone -> never resize, report as unfit.
+    if (!fitsSheet(footprints, gridCols, gridRows)) {
+      if (!unfitSeen.has(unit.sourceImageId)) {
+        unfitSeen.add(unit.sourceImageId)
+        unfit.push({
+          sourceImageId: unit.sourceImageId,
+          label: unit.label,
+          widthCm: unit.widthCm,
+          heightCm: unit.heightCm,
+        })
+      }
+      done++
+      onProgress?.({ done, total })
+      continue
+    }
 
     let placed = false
     for (const page of pages) {
       const hit = findPlacement(page.grid, footprints, stride)
       if (hit) {
-        stamp(page.grid, hit.fp, hit.x, hit.y)
-        page.items.push(toPlacedItem(unit, hit.fp, hit.x, hit.y))
+        place(page, unit, hit)
         placed = true
         break
       }
     }
     if (!placed) {
+      // Fits an empty sheet (checked above) so a fresh page must accept it.
       const page = openPage()
       const hit = findPlacement(page.grid, footprints, stride)
-      if (hit) {
-        stamp(page.grid, hit.fp, hit.x, hit.y)
-        page.items.push(toPlacedItem(unit, hit.fp, hit.x, hit.y))
-      } else {
-        // Art bigger than the sheet even alone — place at origin, angle 0, so it
-        // is at least visible and editable rather than silently dropped.
-        page.items.push(toPlacedItem(unit, footprints[0], 0, 0))
-      }
+      if (hit) place(page, unit, hit)
     }
 
     done++
@@ -410,9 +449,12 @@ export function packImagesByShape(
 
   if (pages.length === 0) openPage()
 
-  return pages.map((p, index) => ({
-    index,
-    items: p.items,
-    usedHeightCm: usedLengthCm(p.items),
-  }))
+  return {
+    pages: pages.map((p, index) => ({
+      index,
+      items: p.items,
+      usedHeightCm: usedLengthCm(p.items),
+    })),
+    unfit,
+  }
 }

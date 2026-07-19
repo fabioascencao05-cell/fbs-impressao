@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { packImagesByShape, type PackOptions, type PackUnitInput } from './shapePacking'
-import type { PackedPage } from '@/types'
+import type { PackResult } from '@/types'
 
 export interface PackRequest {
   units: PackUnitInput[]
@@ -10,13 +10,13 @@ export interface PackRequest {
 
 export type PackResponse =
   | { type: 'progress'; done: number; total: number }
-  | { type: 'done'; pages: PackedPage[] }
+  | { type: 'done'; result: PackResult }
   | { type: 'error'; message: string }
 
 self.onmessage = (e: MessageEvent<PackRequest>) => {
   const { units, options, useShape } = e.data
   try {
-    const pages = packImagesByShape(
+    const result = packImagesByShape(
       units,
       options,
       (p) => {
@@ -25,7 +25,7 @@ self.onmessage = (e: MessageEvent<PackRequest>) => {
       },
       useShape
     )
-    const msg: PackResponse = { type: 'done', pages }
+    const msg: PackResponse = { type: 'done', result }
     ;(self as unknown as Worker).postMessage(msg)
   } catch (err) {
     const msg: PackResponse = {

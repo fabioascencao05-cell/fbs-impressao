@@ -1,4 +1,4 @@
-import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2, Loader2 } from 'lucide-react'
+import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -31,6 +31,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const isPacking = useGangSheetStore((s) => s.isPacking)
   const packProgress = useGangSheetStore((s) => s.packProgress)
   const pages = useGangSheetStore((s) => s.pages)
+  const unfitArts = useGangSheetStore((s) => s.unfitArts)
   const reset = useGangSheetStore((s) => s.reset)
   const { signOut } = useAuth()
   const [isExporting, setIsExporting] = useState(false)
@@ -40,6 +41,15 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
   const handleGenerateLayout = async () => {
     await generateLayout()
+    const unfit = useGangSheetStore.getState().unfitArts
+    if (unfit.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: `${unfit.length} arte(s) não couberam na folha`,
+        description:
+          'A arte mantém o tamanho original — nunca é reduzida. Aumente a folha ou diminua a largura da arte.',
+      })
+    }
     onClose?.()
   }
 
@@ -187,6 +197,24 @@ export default function Sidebar({ onClose }: SidebarProps) {
       <Separator />
 
       <div className="space-y-2 px-4 py-3">
+        {unfitArts.length > 0 && (
+          <div className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-700 dark:text-amber-300">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Não couberam (tamanho preservado):
+            </p>
+            <ul className="space-y-0.5">
+              {unfitArts.map((a) => (
+                <li key={a.sourceImageId} className="truncate text-[11px]" title={a.label}>
+                  • {a.label} ({a.widthCm.toFixed(1)}×{a.heightCm.toFixed(1)} cm)
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10px] opacity-80">
+              Aumente a folha ou reduza a largura da arte na fila.
+            </p>
+          </div>
+        )}
         {images.length > 0 && (
           <p className="text-center text-[11px] text-muted-foreground">
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar

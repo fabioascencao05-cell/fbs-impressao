@@ -57,3 +57,16 @@ export interface PackedPage {
   items: PlacedItem[]
   usedHeightCm: number
 }
+
+/** An art that does not fit the sheet at its user-defined size (never resized). */
+export interface UnfitArt {
+  sourceImageId: string
+  label: string
+  widthCm: number
+  heightCm: number
+}
+
+export interface PackResult {
+  pages: PackedPage[]
+  unfit: UnfitArt[]
+}
