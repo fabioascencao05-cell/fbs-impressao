@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Trash2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -5,17 +6,17 @@ import { Button } from '@/components/ui/button'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import type { GangImage } from '@/types'
 
-export default function ImageQueueItem({ image }: { image: GangImage }) {
+function ImageQueueItem({ image }: { image: GangImage }) {
   const updateQuantity = useGangSheetStore((s) => s.updateQuantity)
   const updateWidthCm = useGangSheetStore((s) => s.updateWidthCm)
   const removeImage = useGangSheetStore((s) => s.removeImage)
 
   return (
-    <div className="flex min-w-0 gap-3 rounded-lg border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
+    <div className="group flex min-w-0 gap-3 rounded-xl border bg-card/50 p-2.5 transition-all hover:border-primary/50 hover:shadow-md hover:shadow-primary/5">
       <img
         src={image.previewUrl}
         alt={image.file.name}
-        className="h-14 w-14 shrink-0 rounded-md border object-contain bg-[conic-gradient(#f0f0f0_0deg_90deg,#fff_90deg_180deg,#f0f0f0_180deg_270deg,#fff_270deg_360deg)] bg-[length:10px_10px]"
+        className="h-14 w-14 shrink-0 rounded-lg border object-contain bg-[conic-gradient(#e9e9ee_0deg_90deg,#fff_90deg_180deg,#e9e9ee_180deg_270deg,#fff_270deg_360deg)] bg-[length:10px_10px]"
       />
 
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -58,10 +59,19 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
             />
           </div>
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
-        </p>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="rounded-md border border-primary/25 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
+            {image.widthCm.toFixed(1)} × {image.heightCm.toFixed(1)} cm
+          </span>
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {image.naturalWidthPx}×{image.naturalHeightPx}px
+          </span>
+        </div>
       </div>
     </div>
   )
 }
+
+// Each queue row only depends on its own image; memoizing keeps the whole list
+// from re-rendering when an unrelated row's quantity/width changes.
+export default memo(ImageQueueItem)

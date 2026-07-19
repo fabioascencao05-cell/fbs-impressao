@@ -23,10 +23,12 @@ export default function LoginPage() {
       </div>
       <div className="relative w-full max-w-sm space-y-6">
         <div className="flex flex-col items-center gap-2 text-center">
-          <div className="glow-primary flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Layers className="h-6 w-6" />
+          <div className="gradient-surface flex h-14 w-14 items-center justify-center rounded-2xl text-white shadow-xl shadow-primary/40">
+            <Layers className="h-7 w-7" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">DTF Gang Sheet Builder</h1>
+          <h1 className="font-display text-2xl font-bold tracking-tight">
+            DTF <span className="gradient-text">Gang Sheet</span> Builder
+          </h1>
           <p className="text-sm text-muted-foreground">
             Entre na sua conta para montar suas folhas de impressão.
           </p>

@@ -1,6 +1,7 @@
 import * as fabric from 'fabric'
 import JSZip from 'jszip'
 import { EXPORT_PX_PER_CM } from './constants'
+import { loadImageElement } from './imageCache'
 import type { PackedPage } from '@/types'
 
 async function renderPageToBlob(
@@ -22,43 +23,37 @@ async function renderPageToBlob(
   })
 
   await Promise.all(
-    page.items.map(
-      (item) =>
-        new Promise<void>((resolve, reject) => {
-          fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' })
-            .then((img) => {
-              // item.xCm/yCm/widthCm/heightCm describe the visible content box,
-              // not the whole (possibly padded) file — scale/position the full
-              // image so its content box lands exactly on that rect, matching
-              // the on-screen editor pixel for pixel.
-              const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
-              const left = item.xCm * EXPORT_PX_PER_CM - item.contentXPx * scale
-              const top = item.yCm * EXPORT_PX_PER_CM - item.contentYPx * scale
-              img.set({
-                left,
-                top,
-                originX: 'left',
-                originY: 'top',
-                angle: item.angle ?? 0,
-                scaleX: scale,
-                scaleY: scale,
-                selectable: false,
-              })
-              staticCanvas.add(img)
-              resolve()
-            })
-            .catch(reject)
-        })
-    )
+    page.items.map(async (item) => {
+      const el = await loadImageElement(item.previewUrl)
+      const img = new fabric.FabricImage(el)
+      // item.xCm/yCm/widthCm/heightCm describe the visible content box,
+      // not the whole (possibly padded) file — scale/position the full
+      // image so its content box lands exactly on that rect, matching
+      // the on-screen editor pixel for pixel.
+      const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
+      const left = item.xCm * EXPORT_PX_PER_CM - item.contentXPx * scale
+      const top = item.yCm * EXPORT_PX_PER_CM - item.contentYPx * scale
+      img.set({
+        left,
+        top,
+        originX: 'left',
+        originY: 'top',
+        angle: item.angle ?? 0,
+        scaleX: scale,
+        scaleY: scale,
+        selectable: false,
+      })
+      staticCanvas.add(img)
+    })
   )
 
   staticCanvas.renderAll()
 
   return new Promise<Blob>((resolve, reject) => {
     canvasEl.toBlob((blob) => {
+      staticCanvas.dispose()
       if (blob) resolve(blob)
       else reject(new Error('Falha ao gerar PNG do canvas.'))
-      staticCanvas.dispose()
     }, 'image/png')
   })
 }

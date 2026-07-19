@@ -1,4 +1,4 @@
-import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2 } from 'lucide-react'
+import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import ImageUploadZone from './ImageUploadZone'
 import ImageQueueItem from './ImageQueueItem'
+import CostCalculator from './CostCalculator'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { downloadGangSheets } from '@/lib/exportCanvas'
 import { useAuth } from '@/hooks/useAuth'
@@ -26,10 +27,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCanvasWidthCm = useGangSheetStore((s) => s.setCanvasWidthCm)
   const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
-  const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
+  const isPacking = useGangSheetStore((s) => s.isPacking)
+  const packProgress = useGangSheetStore((s) => s.packProgress)
   const pages = useGangSheetStore((s) => s.pages)
+  const unfitArts = useGangSheetStore((s) => s.unfitArts)
   const reset = useGangSheetStore((s) => s.reset)
   const { signOut } = useAuth()
   const [isExporting, setIsExporting] = useState(false)
@@ -37,8 +39,17 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
 
-  const handleGenerateLayout = () => {
-    generateLayout()
+  const handleGenerateLayout = async () => {
+    await generateLayout()
+    const unfit = useGangSheetStore.getState().unfitArts
+    if (unfit.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: `${unfit.length} arte(s) não couberam na folha`,
+        description:
+          'A arte mantém o tamanho original — nunca é reduzida. Aumente a folha ou diminua a largura da arte.',
+      })
+    }
     onClose?.()
   }
 
@@ -74,12 +85,14 @@ export default function Sidebar({ onClose }: SidebarProps) {
     <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[var(--sidebar-w,340px)]">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Layers className="h-4 w-4" />
+          <div className="gradient-surface flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-lg shadow-primary/30">
+            <Layers className="h-4.5 w-4.5" />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold leading-tight">Gang Sheet Builder</h1>
-            <p className="truncate text-xs text-muted-foreground">DTF · empacotamento inteligente</p>
+            <h1 className="truncate font-display text-sm font-bold leading-tight">
+              Gang Sheet <span className="gradient-text">Builder</span>
+            </h1>
+            <p className="truncate text-xs text-muted-foreground">DTF · encaixe por forma real</p>
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -124,36 +137,25 @@ export default function Sidebar({ onClose }: SidebarProps) {
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
-                Espaço (cm)
-              </Label>
-              <Input
-                id="item-gap"
-                type="number"
-                min={0}
-                step={0.1}
-                value={itemGapCm}
-                onChange={(e) => setItemGapCm(Number(e.target.value))}
-              />
-            </div>
-            <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
-                Custo/cm² (R$)
-              </Label>
-              <Input
-                id="cost-cm2"
-                type="number"
-                min={0}
-                step={0.01}
-                value={costPerCm2 || ''}
-                placeholder="0.00"
-                onChange={(e) => setCostPerCm2(Number(e.target.value))}
-              />
-            </div>
+          <div className="min-w-0 space-y-0.5">
+            <Label
+              htmlFor="item-gap"
+              title="Folga mínima entre as áreas coloridas de artes vizinhas — para cortar com tesoura"
+            >
+              Espaçamento entre artes (mm)
+            </Label>
+            <Input
+              id="item-gap"
+              type="number"
+              min={0}
+              step={0.5}
+              value={Math.round(itemGapCm * 100) / 10}
+              onChange={(e) => setItemGapCm((Number(e.target.value) || 0) / 10)}
+            />
           </div>
         </div>
+
+        <CostCalculator />
       </div>
 
       <Separator />
@@ -195,6 +197,24 @@ export default function Sidebar({ onClose }: SidebarProps) {
       <Separator />
 
       <div className="space-y-2 px-4 py-3">
+        {unfitArts.length > 0 && (
+          <div className="space-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-700 dark:text-amber-300">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              Não couberam (tamanho preservado):
+            </p>
+            <ul className="space-y-0.5">
+              {unfitArts.map((a) => (
+                <li key={a.sourceImageId} className="truncate text-[11px]" title={a.label}>
+                  • {a.label} ({a.widthCm.toFixed(1)}×{a.heightCm.toFixed(1)} cm)
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10px] opacity-80">
+              Aumente a folha ou reduza a largura da arte na fila.
+            </p>
+          </div>
+        )}
         {images.length > 0 && (
           <p className="text-center text-[11px] text-muted-foreground">
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
@@ -202,11 +222,20 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
         <Button
           className="glow-primary w-full"
-          disabled={images.length === 0}
+          disabled={images.length === 0 || isPacking}
           onClick={handleGenerateLayout}
         >
-          <LayoutGrid className="h-4 w-4" />
-          Gerar Layout
+          {isPacking ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Encaixando… {Math.round(packProgress * 100)}%
+            </>
+          ) : (
+            <>
+              <LayoutGrid className="h-4 w-4" />
+              Gerar Layout
+            </>
+          )}
         </Button>
         <Button
           className="w-full"

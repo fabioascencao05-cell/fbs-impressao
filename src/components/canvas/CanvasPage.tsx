@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
+import { loadImageElement } from '@/lib/imageCache'
 import type { PackedPage } from '@/types'
 
 export interface SelectionInfo {
@@ -186,7 +187,8 @@ export default function CanvasPage({
 
     Promise.all(
       page.items.map((item) =>
-        fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' }).then((img) => {
+        loadImageElement(item.previewUrl).then((el) => {
+          const img = new fabric.FabricImage(el)
           // item.xCm/yCm/widthCm/heightCm describe the visible content box, not
           // the whole (possibly padded) file — scale/position the full image so
           // its content box lands exactly on that rect.

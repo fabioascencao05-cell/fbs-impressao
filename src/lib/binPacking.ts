@@ -1,9 +1,10 @@
-import type { GangImage, PackedPage, PlacedItem } from '@/types'
+import type { GangImage, PackResult, PlacedItem } from '@/types'
 
 interface PackableUnit {
   id: string
   sourceImageId: string
   previewUrl: string
+  label: string
   widthCm: number
   heightCm: number
   contentXPx: number
@@ -38,6 +39,7 @@ function expandQueue(images: GangImage[]): PackableUnit[] {
         id: `${img.id}-${i}`,
         sourceImageId: img.id,
         previewUrl: img.previewUrl,
+        label: img.file.name,
         widthCm: img.widthCm,
         heightCm: img.heightCm,
         contentXPx: img.contentXPx,
@@ -114,31 +116,29 @@ function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
   return pruned
 }
 
-/** Best Short Side Fit: among all free rects that fit, pick the tightest one. */
+/**
+ * Best Short Side Fit: among all free rects that fit, pick the tightest one.
+ * Only the given (non-rotated) orientation is tested, so the caller can rely on
+ * placing the art at its exact user-defined dimensions.
+ */
 function findBestFit(
   freeRects: FreeRect[],
   width: number,
   height: number
-): { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null {
-  let best: { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null = null
+): { rect: FreeRect; shortSide: number; longSide: number } | null {
+  let best: { rect: FreeRect; shortSide: number; longSide: number } | null = null
 
-  const tryFit = (w: number, h: number, rotated: boolean) => {
-    for (const rect of freeRects) {
-      if (rect.width < w || rect.height < h) continue
-      const leftoverW = rect.width - w
-      const leftoverH = rect.height - h
-      const shortSide = Math.min(leftoverW, leftoverH)
-      const longSide = Math.max(leftoverW, leftoverH)
-      if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
-        best = { rect, shortSide, longSide, rotated }
-      }
+  for (const rect of freeRects) {
+    if (rect.width < width || rect.height < height) continue
+    const leftoverW = rect.width - width
+    const leftoverH = rect.height - height
+    const shortSide = Math.min(leftoverW, leftoverH)
+    const longSide = Math.max(leftoverW, leftoverH)
+    if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
+      best = { rect, shortSide, longSide }
     }
   }
 
-  tryFit(width, height, false)
-  if (Math.abs(width - height) > 0.001) {
-    tryFit(height, width, true)
-  }
   return best
 }
 
@@ -160,10 +160,12 @@ export function packImages(
   maxHeightCm: number,
   canvasWidthCm: number,
   itemGapCm: number
-): PackedPage[] {
+): PackResult {
   const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
 
   const buckets: PageBucket[] = []
+  const unfit: PackResult['unfit'] = []
+  const unfitSeen = new Set<string>()
 
   const openNewBucket = (): PageBucket => {
     const bucket: PageBucket = {
@@ -180,7 +182,23 @@ export function packImages(
     const occupiedWidth = itemWidth + itemGapCm
     const occupiedHeight = itemHeight + itemGapCm
 
-    let target: { bucket: PageBucket; rect: FreeRect; rotated: boolean } | null = null
+    // Never resize: an art larger than the sheet at its own size is unfit.
+    if (occupiedWidth > canvasWidthCm || occupiedHeight > maxHeightCm) {
+      if (!unfitSeen.has(unit.sourceImageId)) {
+        unfitSeen.add(unit.sourceImageId)
+        unfit.push({
+          sourceImageId: unit.sourceImageId,
+          label: unit.label,
+          widthCm: unit.widthCm,
+          heightCm: unit.heightCm,
+        })
+      }
+      continue
+    }
+
+    // No auto-rotation in the fallback: keeps the user's exact dimensions and
+    // avoids the origin-rotation aspect distortion in the renderer.
+    let target: { bucket: PageBucket; rect: FreeRect } | null = null
     let bestShortSide = Infinity
     let bestLongSide = Infinity
 
@@ -188,7 +206,7 @@ export function packImages(
       const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
       if (!fit) continue
       if (fit.shortSide < bestShortSide || (fit.shortSide === bestShortSide && fit.longSide < bestLongSide)) {
-        target = { bucket, rect: fit.rect, rotated: fit.rotated }
+        target = { bucket, rect: fit.rect }
         bestShortSide = fit.shortSide
         bestLongSide = fit.longSide
       }
@@ -196,13 +214,16 @@ export function packImages(
 
     if (!target) {
       const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0], rotated: false }
+      target = { bucket, rect: bucket.freeRects[0] }
     }
 
-    const { bucket, rect, rotated } = target
-    const placedW = rotated ? itemHeight : itemWidth
-    const placedH = rotated ? itemWidth : itemHeight
-    const used: FreeRect = { x: rect.x, y: rect.y, width: placedW + itemGapCm, height: placedH + itemGapCm }
+    const { bucket, rect } = target
+    const used: FreeRect = {
+      x: rect.x,
+      y: rect.y,
+      width: itemWidth + itemGapCm,
+      height: itemHeight + itemGapCm,
+    }
 
     bucket.items.push({
       id: unit.id,
@@ -210,9 +231,9 @@ export function packImages(
       previewUrl: unit.previewUrl,
       xCm: rect.x,
       yCm: rect.y,
-      widthCm: placedW,
-      heightCm: placedH,
-      angle: rotated ? 90 : 0,
+      widthCm: itemWidth,
+      heightCm: itemHeight,
+      angle: 0,
       contentXPx: unit.contentXPx,
       contentYPx: unit.contentYPx,
       contentWidthPx: unit.contentWidthPx,
@@ -226,9 +247,12 @@ export function packImages(
 
   if (buckets.length === 0) openNewBucket()
 
-  return buckets.map((bucket, index) => ({
-    index,
-    items: bucket.items,
-    usedHeightCm: bucket.items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0),
-  }))
+  return {
+    pages: buckets.map((bucket, index) => ({
+      index,
+      items: bucket.items,
+      usedHeightCm: bucket.items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0),
+    })),
+    unfit,
+  }
 }
