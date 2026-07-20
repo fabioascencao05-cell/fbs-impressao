@@ -32,7 +32,15 @@ export default function CanvasWorkspace() {
   const contentRef = useRef<HTMLDivElement>(null)
   const hadPagesRef = useRef(false)
   // Pending zoom-to-cursor correction, applied after the zoom re-render lands.
-  const zoomAnchorRef = useRef<{ clientX: number; clientY: number; relX: number; relY: number; ratio: number } | null>(null)
+  const zoomAnchorRef = useRef<{
+    cursorX: number
+    cursorY: number
+    padL: number
+    padT: number
+    scrollLeft: number
+    scrollTop: number
+    ratio: number
+  } | null>(null)
 
   const pxPerCm = DISPLAY_PX_PER_CM * zoom
   const visiblePages = useMemo(() => pages.filter((p) => p.items.length > 0), [pages])
@@ -90,12 +98,17 @@ export default function CanvasWorkspace() {
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
       const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor))
       if (nextZoom === zoom) return
-      const contentRect = content.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+      const style = getComputedStyle(content)
+      // Only the sheets scale with zoom; the wrapper's padding stays fixed, so
+      // anchor relative to the padding edge to keep the cursor point stable.
       zoomAnchorRef.current = {
-        clientX: e.clientX,
-        clientY: e.clientY,
-        relX: e.clientX - contentRect.left,
-        relY: e.clientY - contentRect.top,
+        cursorX: e.clientX - elRect.left,
+        cursorY: e.clientY - elRect.top,
+        padL: parseFloat(style.paddingLeft) || 0,
+        padT: parseFloat(style.paddingTop) || 0,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
         ratio: nextZoom / zoom,
       }
       setZoom(nextZoom)
@@ -104,18 +117,19 @@ export default function CanvasWorkspace() {
     return () => el.removeEventListener('wheel', onWheel)
   }, [zoom, setZoom])
 
-  // After a wheel-zoom re-render, nudge the scroll so the point that was under
-  // the cursor stays under the cursor.
+  // After a wheel-zoom re-render, set the scroll so the point that was under the
+  // cursor stays under it. The scaling content starts after the fixed padding,
+  // so only the distance past the padding edge grows by `ratio`.
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current
     if (!anchor) return
     zoomAnchorRef.current = null
     const el = scrollRef.current
-    const content = contentRef.current
-    if (!el || !content) return
-    const contentRect = content.getBoundingClientRect()
-    el.scrollLeft += contentRect.left + anchor.relX * anchor.ratio - anchor.clientX
-    el.scrollTop += contentRect.top + anchor.relY * anchor.ratio - anchor.clientY
+    if (!el) return
+    const contentX = anchor.scrollLeft + anchor.cursorX
+    const contentY = anchor.scrollTop + anchor.cursorY
+    el.scrollLeft = anchor.padL + (contentX - anchor.padL) * anchor.ratio - anchor.cursorX
+    el.scrollTop = anchor.padT + (contentY - anchor.padT) * anchor.ratio - anchor.cursorY
   }, [zoom])
 
   // Delete key removes the selected art.

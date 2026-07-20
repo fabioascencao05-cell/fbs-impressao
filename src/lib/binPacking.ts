@@ -1,3 +1,4 @@
+import { rotatedAabbCm } from '@/lib/geometry'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 interface PackableUnit {
@@ -242,9 +243,9 @@ export function packImages(
     index,
     items: bucket.items,
     // Bottom edge uses the on-sheet box height, which is the art's width when rotated.
-    usedHeightCm: bucket.items.reduce((max, it) => {
-      const boxH = Math.round(it.angle) % 180 === 0 ? it.heightCm : it.widthCm
-      return Math.max(max, it.yCm + boxH)
-    }, 0),
+    usedHeightCm: bucket.items.reduce(
+      (max, it) => Math.max(max, it.yCm + rotatedAabbCm(it.widthCm, it.heightCm, it.angle).hCm),
+      0
+    ),
   }))
 }

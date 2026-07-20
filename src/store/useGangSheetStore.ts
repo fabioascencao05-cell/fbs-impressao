@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { packImages } from '@/lib/binPacking'
+import { rotatedAabbCm } from '@/lib/geometry'
 import { computeContentBox } from '@/lib/trimImage'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
@@ -43,6 +44,16 @@ interface GangSheetState {
 
 function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
+}
+
+// Bottom edge of an item on the sheet, honouring rotation: a 90°-rotated item's
+// on-sheet height is its (unrotated) width, so we take the AABB height.
+function itemBottomCm(it: PlacedItem) {
+  return it.yCm + rotatedAabbCm(it.widthCm, it.heightCm, it.angle).hCm
+}
+
+function computeUsedHeightCm(items: PlacedItem[]) {
+  return items.reduce((max, it) => Math.max(max, itemBottomCm(it)), 0)
 }
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
@@ -145,7 +156,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
         const items = page.items.map((it) => (it.id === itemId ? { ...it, ...patch } : it))
-        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
+        const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
     }))
@@ -156,7 +167,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
         const items = page.items.filter((it) => it.id !== itemId)
-        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
+        const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
     }))
@@ -175,7 +186,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
           yCm: source.yCm + 1,
         }
         const items = [...page.items, clone]
-        const usedHeightCm = items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0)
+        const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
     }))
