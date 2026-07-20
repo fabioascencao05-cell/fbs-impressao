@@ -116,28 +116,36 @@ function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
 
 /**
  * Best Short Side Fit: among all free rects that fit, pick the tightest one.
- * Items are always placed in their original orientation — the packer never
- * rotates, so the on-canvas renderer (which draws every packed item at angle 0)
- * always receives a box whose size matches exactly what was reserved here.
+ * Each item is tried in both orientations (original and rotated 90°) and the
+ * tighter of the two wins, so tall art can lie on its side to fill a wide gap.
+ * The chosen orientation is reported back via `rotated`; the renderer draws the
+ * art at the matching angle, so the packed box always matches what's on screen.
  */
 function findBestFit(
   freeRects: FreeRect[],
   width: number,
   height: number
-): { rect: FreeRect; shortSide: number; longSide: number } | null {
-  let best: { rect: FreeRect; shortSide: number; longSide: number } | null = null
+): { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null {
+  let best: { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null = null
 
-  for (const rect of freeRects) {
-    if (rect.width < width || rect.height < height) continue
-    const leftoverW = rect.width - width
-    const leftoverH = rect.height - height
-    const shortSide = Math.min(leftoverW, leftoverH)
-    const longSide = Math.max(leftoverW, leftoverH)
-    if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
-      best = { rect, shortSide, longSide }
+  const tryFit = (w: number, h: number, rotated: boolean) => {
+    for (const rect of freeRects) {
+      if (rect.width < w || rect.height < h) continue
+      const leftoverW = rect.width - w
+      const leftoverH = rect.height - h
+      const shortSide = Math.min(leftoverW, leftoverH)
+      const longSide = Math.max(leftoverW, leftoverH)
+      if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
+        best = { rect, shortSide, longSide, rotated }
+      }
     }
   }
 
+  tryFit(width, height, false)
+  // Only bother with the rotated orientation when it's actually different.
+  if (Math.abs(width - height) > 0.001) {
+    tryFit(height, width, true)
+  }
   return best
 }
 
@@ -151,9 +159,11 @@ function findBestFit(
  * - Placing an item splits/prunes the free rectangle list so leftover gaps
  *   next to and below it stay available for smaller items later — unlike
  *   shelf packing, nothing is wasted just because it doesn't share a row.
- * - Rotation is never attempted: every item is placed in its original
- *   orientation at angle 0, so the packed box always matches how the canvas
- *   renderer draws it. Rotation stays a manual, on-canvas action.
+ * - Each item may be auto-rotated 90° when that orientation fills the space
+ *   better. `widthCm`/`heightCm` on the result always stay the art's real
+ *   (unrotated) size; `angle` records the orientation and `xCm`/`yCm` are the
+ *   top-left of the on-sheet bounding box. The renderer reads all three, so the
+ *   drawn art matches the reserved box exactly. Sizes are never changed.
  */
 export function packImages(
   images: GangImage[],
@@ -180,7 +190,7 @@ export function packImages(
     const occupiedWidth = itemWidth + itemGapCm
     const occupiedHeight = itemHeight + itemGapCm
 
-    let target: { bucket: PageBucket; rect: FreeRect } | null = null
+    let target: { bucket: PageBucket; rect: FreeRect; rotated: boolean } | null = null
     let bestShortSide = Infinity
     let bestLongSide = Infinity
 
@@ -188,7 +198,7 @@ export function packImages(
       const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
       if (!fit) continue
       if (fit.shortSide < bestShortSide || (fit.shortSide === bestShortSide && fit.longSide < bestLongSide)) {
-        target = { bucket, rect: fit.rect }
+        target = { bucket, rect: fit.rect, rotated: fit.rotated }
         bestShortSide = fit.shortSide
         bestLongSide = fit.longSide
       }
@@ -196,13 +206,15 @@ export function packImages(
 
     if (!target) {
       const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0] }
+      target = { bucket, rect: bucket.freeRects[0], rotated: false }
     }
 
-    const { bucket, rect } = target
-    const placedW = itemWidth
-    const placedH = itemHeight
-    const used: FreeRect = { x: rect.x, y: rect.y, width: placedW + itemGapCm, height: placedH + itemGapCm }
+    const { bucket, rect, rotated } = target
+    // widthCm/heightCm stay the art's real size; the on-sheet box swaps sides
+    // when the item is rotated 90°.
+    const boxWidth = rotated ? itemHeight : itemWidth
+    const boxHeight = rotated ? itemWidth : itemHeight
+    const used: FreeRect = { x: rect.x, y: rect.y, width: boxWidth + itemGapCm, height: boxHeight + itemGapCm }
 
     bucket.items.push({
       id: unit.id,
@@ -210,9 +222,9 @@ export function packImages(
       previewUrl: unit.previewUrl,
       xCm: rect.x,
       yCm: rect.y,
-      widthCm: placedW,
-      heightCm: placedH,
-      angle: 0,
+      widthCm: itemWidth,
+      heightCm: itemHeight,
+      angle: rotated ? 90 : 0,
       contentXPx: unit.contentXPx,
       contentYPx: unit.contentYPx,
       contentWidthPx: unit.contentWidthPx,
@@ -229,6 +241,10 @@ export function packImages(
   return buckets.map((bucket, index) => ({
     index,
     items: bucket.items,
-    usedHeightCm: bucket.items.reduce((max, it) => Math.max(max, it.yCm + it.heightCm), 0),
+    // Bottom edge uses the on-sheet box height, which is the art's width when rotated.
+    usedHeightCm: bucket.items.reduce((max, it) => {
+      const boxH = Math.round(it.angle) % 180 === 0 ? it.heightCm : it.widthCm
+      return Math.max(max, it.yCm + boxH)
+    }, 0),
   }))
 }
