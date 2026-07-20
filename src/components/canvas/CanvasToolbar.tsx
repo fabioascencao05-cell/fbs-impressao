@@ -68,7 +68,7 @@ export default function CanvasToolbar({
           size="icon"
           className="h-7 w-7"
           onClick={onZoomFit}
-          title="Ajustar à tela"
+          title="Ajustar à tela · dica: Ctrl/⌘ + scroll aproxima e afasta"
         >
           <Maximize className="h-4 w-4" />
         </Button>

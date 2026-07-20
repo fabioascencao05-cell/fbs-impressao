@@ -1,6 +1,7 @@
 import * as fabric from 'fabric'
 import JSZip from 'jszip'
 import { EXPORT_PX_PER_CM } from './constants'
+import { rotatedAabbCm } from './geometry'
 import type { PackedPage } from '@/types'
 
 async function renderPageToBlob(
@@ -27,18 +28,20 @@ async function renderPageToBlob(
         new Promise<void>((resolve, reject) => {
           fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' })
             .then((img) => {
-              // item.xCm/yCm/widthCm/heightCm describe the visible content box,
-              // not the whole (possibly padded) file — scale/position the full
-              // image so its content box lands exactly on that rect, matching
-              // the on-screen editor pixel for pixel.
+              // Crop to the content box and use a centre origin, exactly like the
+              // on-screen editor (CanvasPage), so the exported PNG matches it
+              // pixel for pixel — including auto-rotated art.
               const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
-              const left = item.xCm * EXPORT_PX_PER_CM - item.contentXPx * scale
-              const top = item.yCm * EXPORT_PX_PER_CM - item.contentYPx * scale
+              const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
               img.set({
-                left,
-                top,
-                originX: 'left',
-                originY: 'top',
+                cropX: item.contentXPx,
+                cropY: item.contentYPx,
+                width: item.contentWidthPx,
+                height: item.contentHeightPx,
+                originX: 'center',
+                originY: 'center',
+                left: (item.xCm + box.wCm / 2) * EXPORT_PX_PER_CM,
+                top: (item.yCm + box.hCm / 2) * EXPORT_PX_PER_CM,
                 angle: item.angle ?? 0,
                 scaleX: scale,
                 scaleY: scale,

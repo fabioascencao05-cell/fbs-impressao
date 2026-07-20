@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Layers, Trash2 } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { DISPLAY_PX_PER_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
@@ -29,7 +29,18 @@ export default function CanvasWorkspace() {
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const hadPagesRef = useRef(false)
+  // Pending zoom-to-cursor correction, applied after the zoom re-render lands.
+  const zoomAnchorRef = useRef<{
+    cursorX: number
+    cursorY: number
+    padL: number
+    padT: number
+    scrollLeft: number
+    scrollTop: number
+    ratio: number
+  } | null>(null)
 
   const pxPerCm = DISPLAY_PX_PER_CM * zoom
   const visiblePages = useMemo(() => pages.filter((p) => p.items.length > 0), [pages])
@@ -73,6 +84,54 @@ export default function CanvasWorkspace() {
     hadPagesRef.current = hasPages
   }, [visiblePages.length, handleZoomFit])
 
+  // CorelDraw-style zooming: Ctrl/⌘ + wheel zooms toward the cursor, plain
+  // wheel keeps scrolling/panning the sheet. Attached natively so we can
+  // preventDefault the browser's own ctrl+wheel page zoom.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      const content = contentRef.current
+      if (!content) return
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+      const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor))
+      if (nextZoom === zoom) return
+      const elRect = el.getBoundingClientRect()
+      const style = getComputedStyle(content)
+      // Only the sheets scale with zoom; the wrapper's padding stays fixed, so
+      // anchor relative to the padding edge to keep the cursor point stable.
+      zoomAnchorRef.current = {
+        cursorX: e.clientX - elRect.left,
+        cursorY: e.clientY - elRect.top,
+        padL: parseFloat(style.paddingLeft) || 0,
+        padT: parseFloat(style.paddingTop) || 0,
+        scrollLeft: el.scrollLeft,
+        scrollTop: el.scrollTop,
+        ratio: nextZoom / zoom,
+      }
+      setZoom(nextZoom)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [zoom, setZoom])
+
+  // After a wheel-zoom re-render, set the scroll so the point that was under the
+  // cursor stays under it. The scaling content starts after the fixed padding,
+  // so only the distance past the padding edge grows by `ratio`.
+  useLayoutEffect(() => {
+    const anchor = zoomAnchorRef.current
+    if (!anchor) return
+    zoomAnchorRef.current = null
+    const el = scrollRef.current
+    if (!el) return
+    const contentX = anchor.scrollLeft + anchor.cursorX
+    const contentY = anchor.scrollTop + anchor.cursorY
+    el.scrollLeft = anchor.padL + (contentX - anchor.padL) * anchor.ratio - anchor.cursorX
+    el.scrollTop = anchor.padT + (contentY - anchor.padT) * anchor.ratio - anchor.cursorY
+  }, [zoom])
+
   // Delete key removes the selected art.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -98,9 +157,9 @@ export default function CanvasWorkspace() {
         />
       )}
 
-      <div ref={scrollRef} className="workspace-bg flex-1 overflow-auto p-8">
+      <div ref={scrollRef} className="workspace-bg flex-1 overflow-auto">
         {visiblePages.length === 0 ? (
-          <div className="flex h-full items-center justify-center">
+          <div className="flex h-full items-center justify-center p-8">
             <div className="flex max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed bg-card/50 px-8 py-10 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <Layers className="h-7 w-7" />
@@ -132,7 +191,10 @@ export default function CanvasWorkspace() {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-start gap-10">
+          <div
+            ref={contentRef}
+            className="mx-auto flex w-fit min-w-full flex-col items-center gap-10 p-8 md:px-16"
+          >
             {visiblePages.map((page) => {
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'

@@ -19,14 +19,18 @@ export interface PlacedItem {
   id: string
   sourceImageId: string
   previewUrl: string
+  // Top-left of the item's axis-aligned bounding box on the sheet, in cm.
   xCm: number
   yCm: number
+  // The art's real, unrotated content size in cm — never swapped by rotation,
+  // so it always reflects the true printed measure. The on-sheet footprint is
+  // derived from these plus `angle` (see rotatedAabbCm).
   widthCm: number
   heightCm: number
-  angle: number // rotation in degrees, around the top-left origin
-  // Same content bounding box + full file dimensions, carried over from the
-  // source GangImage so the renderer/exporter can place the whole (padded)
-  // image behind the packed content rectangle.
+  angle: number // rotation in degrees (0 or 90 from the packer; any value if the user rotates by hand)
+  // Content bounding box (tight non-transparent rect) + full file dimensions,
+  // carried over from the source GangImage so the renderer/exporter can crop the
+  // image to just the visible art before scaling/rotating it into place.
   contentXPx: number
   contentYPx: number
   contentWidthPx: number

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
+import { rotatedAabbCm } from '@/lib/geometry'
 import type { PackedPage } from '@/types'
 
 export interface SelectionInfo {
@@ -20,13 +21,6 @@ interface CanvasPageProps {
   onSelectionChange: (sel: SelectionInfo | null) => void
 }
 
-interface ContentBox {
-  contentXPx: number
-  contentYPx: number
-  contentWidthPx: number
-  contentHeightPx: number
-}
-
 interface HudInfo {
   left: number
   top: number
@@ -35,10 +29,9 @@ interface HudInfo {
   angle: number
 }
 
-// Fabric objects carry the source PlacedItem id + its content bounding box
-// (in the original file's px space) so edits map back to the store using
-// the visible artwork's rect, not the full (possibly padded) image file.
-type TaggedImage = fabric.FabricImage & { itemId?: string; contentBox?: ContentBox }
+// Fabric objects are tagged with the source PlacedItem id so selection/resize
+// events map straight back to the store entry they came from.
+type TaggedImage = fabric.FabricImage & { itemId?: string }
 
 const BACKGROUND_PRESETS: Record<string, string> = {
   checkerboard:
@@ -91,18 +84,19 @@ export default function CanvasPage({
 
     const pageIndex = page.index
 
-    // Content-box dims/position in cm, derived from the object's own scale —
-    // works whether the item just loaded or the user is mid-resize.
+    // Real (unrotated) art size + bounding-box top-left in cm, read straight
+    // from the Fabric object. The image is cropped to its content box and uses a
+    // centre origin, so getScaledWidth/Height give the true art size (rotation
+    // aside) and getBoundingRect gives the padding-free box on the sheet — this
+    // stays correct whether the item just loaded, is mid-resize or mid-rotate.
     const contentRectCm = (obj: TaggedImage) => {
-      const box = obj.contentBox
-      if (!box) return null
-      const scaleX = obj.scaleX ?? 1
-      const scaleY = obj.scaleY ?? 1
+      obj.setCoords()
+      const br = obj.getBoundingRect()
       return {
-        widthCm: (box.contentWidthPx * scaleX) / pxPerCm,
-        heightCm: (box.contentHeightPx * scaleY) / pxPerCm,
-        xCm: ((obj.left ?? 0) + box.contentXPx * scaleX) / pxPerCm,
-        yCm: ((obj.top ?? 0) + box.contentYPx * scaleY) / pxPerCm,
+        widthCm: obj.getScaledWidth() / pxPerCm,
+        heightCm: obj.getScaledHeight() / pxPerCm,
+        xCm: br.left / pxPerCm,
+        yCm: br.top / pxPerCm,
       }
     }
 
@@ -187,17 +181,21 @@ export default function CanvasPage({
     Promise.all(
       page.items.map((item) =>
         fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' }).then((img) => {
-          // item.xCm/yCm/widthCm/heightCm describe the visible content box, not
-          // the whole (possibly padded) file — scale/position the full image so
-          // its content box lands exactly on that rect.
+          // Crop the file down to just its visible content box so the Fabric
+          // object *is* the art (no transparent padding), then use a centre
+          // origin: rotation happens in place and the on-sheet bounding box maps
+          // cleanly to xCm/yCm regardless of angle.
           const scale = (item.widthCm * pxPerCm) / item.contentWidthPx
-          const fabricLeft = item.xCm * pxPerCm - item.contentXPx * scale
-          const fabricTop = item.yCm * pxPerCm - item.contentYPx * scale
+          const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
           img.set({
-            left: fabricLeft,
-            top: fabricTop,
-            originX: 'left',
-            originY: 'top',
+            cropX: item.contentXPx,
+            cropY: item.contentYPx,
+            width: item.contentWidthPx,
+            height: item.contentHeightPx,
+            originX: 'center',
+            originY: 'center',
+            left: (item.xCm + box.wCm / 2) * pxPerCm,
+            top: (item.yCm + box.hCm / 2) * pxPerCm,
             angle: item.angle ?? 0,
             scaleX: scale,
             scaleY: scale,
@@ -213,12 +211,6 @@ export default function CanvasPage({
           img.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false })
           const tagged = img as TaggedImage
           tagged.itemId = item.id
-          tagged.contentBox = {
-            contentXPx: item.contentXPx,
-            contentYPx: item.contentYPx,
-            contentWidthPx: item.contentWidthPx,
-            contentHeightPx: item.contentHeightPx,
-          }
           return img
         })
       )
@@ -257,9 +249,11 @@ export default function CanvasPage({
       <canvas ref={canvasElRef} />
 
       {/* Action buttons per item (duplicate + delete), always available without selecting. */}
-      {page.items.map((item) => (
+      {page.items.map((item) => {
+        const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
+        return (
         <div key={item.id} className="absolute z-10 flex gap-0.5" style={{
-          left: (item.xCm + item.widthCm) * pxPerCm - 26,
+          left: (item.xCm + box.wCm) * pxPerCm - 26,
           top: item.yCm * pxPerCm - 10,
         }}>
           <button
@@ -287,7 +281,8 @@ export default function CanvasPage({
             <X className="h-3 w-3" />
           </button>
         </div>
-      ))}
+        )
+      })}
 
       {/* CorelDraw-style dimension readout: floats above the selected art,
           always fully visible and updates live while moving/scaling/rotating. */}
