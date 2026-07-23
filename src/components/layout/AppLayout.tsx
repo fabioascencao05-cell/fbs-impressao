@@ -42,7 +42,7 @@ export default function AppLayout() {
   }, [])
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
+    <div className="flex h-full w-full flex-col overflow-hidden md:flex-row">
       <div className="glass-panel flex items-center gap-2 border-b px-3 py-2 md:hidden">
         <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} title="Abrir menu">
           <Menu className="h-5 w-5" />
