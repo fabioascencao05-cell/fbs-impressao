@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
-import { Copy, X } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { rotatedAabbCm } from '@/lib/geometry'
 import type { PackedPage } from '@/types'
@@ -48,8 +47,6 @@ export default function CanvasPage({
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
-  const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
-  const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
   const [hud, setHud] = useState<HudInfo | null>(null)
 
@@ -247,42 +244,6 @@ export default function CanvasPage({
       }}
     >
       <canvas ref={canvasElRef} />
-
-      {/* Action buttons per item (duplicate + delete), always available without selecting. */}
-      {page.items.map((item) => {
-        const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
-        return (
-        <div key={item.id} className="absolute z-10 flex gap-0.5" style={{
-          left: (item.xCm + box.wCm) * pxPerCm - 26,
-          top: item.yCm * pxPerCm - 10,
-        }}>
-          <button
-            type="button"
-            title="Duplicar esta arte"
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground opacity-60 shadow transition-opacity hover:opacity-100"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              duplicatePlacedItem(page.index, item.id)
-            }}
-          >
-            <Copy className="h-3 w-3" />
-          </button>
-          <button
-            type="button"
-            title="Excluir esta arte"
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-60 shadow transition-opacity hover:opacity-100"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              removePlacedItem(page.index, item.id)
-            }}
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-        )
-      })}
 
       {/* CorelDraw-style dimension readout: floats above the selected art,
           always fully visible and updates live while moving/scaling/rotating. */}

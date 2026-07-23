@@ -1,4 +1,4 @@
-import { LayoutGrid, Download, LogOut, X, Layers, ImageOff, Trash2 } from 'lucide-react'
+import { LayoutGrid, Download, X, Layers, ImageOff, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,9 +9,7 @@ import ImageUploadZone from './ImageUploadZone'
 import ImageQueueItem from './ImageQueueItem'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { downloadGangSheets } from '@/lib/exportCanvas'
-import { useAuth } from '@/hooks/useAuth'
 import { toast } from '@/hooks/use-toast'
-import { ThemeToggle } from '@/components/theme-toggle'
 import { useState } from 'react'
 
 interface SidebarProps {
@@ -31,7 +29,6 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
   const reset = useGangSheetStore((s) => s.reset)
-  const { signOut } = useAuth()
   const [isExporting, setIsExporting] = useState(false)
 
   const hasLayout = pages.some((p) => p.items.length > 0)
@@ -71,7 +68,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-screen md:w-[var(--sidebar-w,340px)]">
+    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -82,17 +79,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
             <p className="truncate text-xs text-muted-foreground">DTF · empacotamento inteligente</p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <ThemeToggle />
-          <Button variant="ghost" size="icon" onClick={signOut} title="Sair">
-            <LogOut className="h-4 w-4" />
+        {onClose && (
+          <Button variant="ghost" size="icon" onClick={onClose} title="Fechar" className="shrink-0 md:hidden">
+            <X className="h-4 w-4" />
           </Button>
-          {onClose && (
-            <Button variant="ghost" size="icon" onClick={onClose} title="Fechar" className="md:hidden">
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+        )}
       </div>
 
       <div className="space-y-3 px-4 py-3">

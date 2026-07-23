@@ -24,6 +24,7 @@ export default function CanvasWorkspace() {
   const setZoom = useGangSheetStore((s) => s.setZoom)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
+  const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
   const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
 
@@ -50,6 +51,11 @@ export default function CanvasWorkspace() {
     removePlacedItem(selection.pageIndex, selection.itemId)
     setSelection(null)
   }, [selection, removePlacedItem])
+
+  const handleDuplicateSelected = useCallback(() => {
+    if (!selection) return
+    duplicatePlacedItem(selection.pageIndex, selection.itemId)
+  }, [selection, duplicatePlacedItem])
 
   const handleDeletePage = useCallback(
     (pageIndex: number) => {
@@ -153,6 +159,7 @@ export default function CanvasWorkspace() {
           onZoomFit={handleZoomFit}
           selection={selection}
           onDeleteSelected={handleDeleteSelected}
+          onDuplicateSelected={handleDuplicateSelected}
           onRegenerate={handleRegenerate}
         />
       )}
@@ -198,8 +205,10 @@ export default function CanvasWorkspace() {
             {visiblePages.map((page) => {
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
-              const usedArea = page.items.reduce((sum, it) => sum + it.widthCm * it.heightCm, 0)
-              const pageCost = costPerCm2 > 0 ? usedArea * costPerCm2 : 0
+              // DTF é cobrado pelo filme consumido (largura da folha × altura
+              // usada), não só pela área das artes — os espaços também gastam filme.
+              const filmAreaCm2 = canvasWidthCm * page.usedHeightCm
+              const pageCost = costPerCm2 > 0 ? filmAreaCm2 * costPerCm2 : 0
               return (
                 <div key={page.index} className="flex flex-col">
                   <div className="mb-2 flex w-full items-center justify-between gap-4 rounded-lg border bg-card/70 px-3 py-1.5">
@@ -216,7 +225,7 @@ export default function CanvasWorkspace() {
                         {Math.round(eff * 100)}% aproveitado
                       </Badge>
                       {pageCost > 0 && (
-                        <Badge variant="outline" title="Custo estimado desta página">
+                        <Badge variant="outline" title="Custo do filme usado (largura × altura usada × custo/cm²)">
                           R$ {pageCost.toFixed(2)}
                         </Badge>
                       )}

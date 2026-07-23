@@ -1,4 +1,4 @@
-import { ZoomIn, ZoomOut, Maximize, Trash2, RefreshCw, MousePointer2 } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Trash2, RefreshCw, MousePointer2, Copy } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from '@/lib/constants'
@@ -23,6 +23,7 @@ interface CanvasToolbarProps {
   onZoomFit: () => void
   selection: SelectionInfo | null
   onDeleteSelected: () => void
+  onDuplicateSelected: () => void
   onRegenerate: () => void
 }
 
@@ -32,6 +33,7 @@ export default function CanvasToolbar({
   onZoomFit,
   selection,
   onDeleteSelected,
+  onDuplicateSelected,
   onRegenerate,
 }: CanvasToolbarProps) {
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
@@ -111,20 +113,32 @@ export default function CanvasToolbar({
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
         {selection ? (
-          <Button
-            variant="destructive"
-            size="sm"
-            className="h-8"
-            onClick={onDeleteSelected}
-            title="Remover arte selecionada (Delete)"
-          >
-            <Trash2 className="h-4 w-4" />
-            Remover
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={onDuplicateSelected}
+              title="Duplicar arte selecionada"
+            >
+              <Copy className="h-4 w-4" />
+              Duplicar
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-8"
+              onClick={onDeleteSelected}
+              title="Remover arte selecionada (Delete)"
+            >
+              <Trash2 className="h-4 w-4" />
+              Remover
+            </Button>
+          </>
         ) : (
           <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
             <MousePointer2 className="h-3.5 w-3.5" />
-            Clique numa arte para mover, redimensionar ou girar
+            Clique numa arte para mover, duplicar, girar ou redimensionar
           </span>
         )}
       </div>
