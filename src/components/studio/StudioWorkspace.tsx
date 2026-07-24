@@ -12,6 +12,8 @@ import {
   Eye,
   X,
   ImagePlus,
+  Wand2,
+  Maximize2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -21,6 +23,7 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { removeBackground } from '@/lib/imageTools/removeBackground'
 import { enhanceImage } from '@/lib/imageTools/enhanceImage'
 import { vectorizeToSvg, svgToPngBlob, type VectorizePreset } from '@/lib/imageTools/vectorize'
+import { aiRemoveBackground, aiUpscale, aiRestore, aiGenerate } from '@/lib/imageTools/replicateAi'
 import { downloadBlob, downloadText, withExtension } from '@/lib/imageTools/imageUtils'
 import type { StudioAsset } from './studioTypes'
 
@@ -56,6 +59,8 @@ export default function StudioWorkspace() {
   const [vectorPreset, setVectorPreset] = useState<VectorizePreset>('logo')
   const [showOriginal, setShowOriginal] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [genPrompt, setGenPrompt] = useState('')
+  const [generating, setGenerating] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const selected = assets.find((a) => a.id === selectedId) ?? null
@@ -185,6 +190,42 @@ export default function StudioWorkspace() {
     [vectorPreset, patchAsset, setResult]
   )
 
+  // Generic runner for the premium (Replicate) ops that transform the selected
+  // image in place. `fn` receives the current blob and returns the AI result.
+  const runAi = useCallback(
+    async (asset: StudioAsset, label: string, fn: (b: Blob) => Promise<Blob>) => {
+      patchAsset(asset.id, { busy: label, progress: null })
+      try {
+        const out = await fn(asset.resultBlob)
+        await setResult(asset.id, out, { svg: null })
+        toast({ title: 'Pronto (IA premium)', description: 'Resultado aplicado. Baixe ou use na folha.' })
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Falha na IA premium', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
+      } finally {
+        patchAsset(asset.id, { busy: null, progress: null })
+      }
+    },
+    [patchAsset, setResult]
+  )
+
+  // Text-to-image generation adds a brand-new asset to the queue.
+  const runGenerate = useCallback(async () => {
+    const prompt = genPrompt.trim()
+    if (!prompt) return
+    setGenerating(true)
+    try {
+      const blob = await aiGenerate(prompt)
+      const file = new File([blob], `ia-${Date.now()}.png`, { type: blob.type || 'image/png' })
+      await addFiles([file])
+      toast({ title: 'Arte gerada', description: 'Adicionada à fila. Ajuste, tire fundo ou use na folha.' })
+      setGenPrompt('')
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Falha ao gerar', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
+    } finally {
+      setGenerating(false)
+    }
+  }, [genPrompt, addFiles])
+
   const removeAsset = useCallback((id: string) => {
     setAssets((prev) => {
       const target = prev.find((a) => a.id === id)
@@ -257,6 +298,30 @@ export default function StudioWorkspace() {
             className="hidden"
             onChange={(e) => { if (e.target.files) addFiles(Array.from(e.target.files)); e.target.value = '' }}
           />
+
+          {/* Gerar arte por texto (IA premium — Replicate FLUX) */}
+          <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
+            <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold">
+              <Wand2 className="h-3.5 w-3.5 text-primary" /> Gerar arte por IA
+              <Badge variant="secondary" className="ml-auto text-[9px]">premium</Badge>
+            </div>
+            <textarea
+              value={genPrompt}
+              onChange={(e) => setGenPrompt(e.target.value)}
+              placeholder="Descreva a arte (ex.: leão geométrico colorido, fundo transparente)"
+              rows={2}
+              className="w-full resize-none rounded-md border bg-background px-2 py-1.5 text-xs outline-none focus:border-primary"
+            />
+            <Button
+              className="glow-primary mt-2 w-full"
+              size="sm"
+              disabled={generating || !genPrompt.trim()}
+              onClick={runGenerate}
+            >
+              {generating ? <><Loader2 className="h-4 w-4 animate-spin" /> Gerando…</> : <><Wand2 className="h-4 w-4" /> Gerar</>}
+            </Button>
+            <p className="mt-1 text-[10px] text-muted-foreground">Dica: peça só o desenho; escreva o texto/nome depois no editor.</p>
+          </div>
         </div>
 
         <div className="flex items-center justify-between px-4 pb-2">
@@ -442,6 +507,31 @@ export default function StudioWorkspace() {
                 <Button className="w-full" variant="secondary" disabled={!!busy} onClick={() => runVectorize(selected)}>
                   Gerar vetor (SVG)
                 </Button>
+              </div>
+
+              {/* Premium (IA paga — Replicate) */}
+              <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                  <Wand2 className="h-4 w-4 text-primary" /> Premium (IA)
+                  <Badge variant="secondary" className="ml-auto text-[9px]">paga</Badge>
+                </div>
+                <p className="mb-2 text-[11px] text-muted-foreground">
+                  Qualidade máxima via Replicate. Requer a chave configurada no Supabase.
+                </p>
+                <div className="space-y-1.5">
+                  <Button className="w-full justify-start" size="sm" variant="outline" disabled={!!busy}
+                    onClick={() => runAi(selected, 'Removendo o fundo (IA)…', aiRemoveBackground)}>
+                    <Scissors className="h-4 w-4" /> Remover fundo (IA)
+                  </Button>
+                  <Button className="w-full justify-start" size="sm" variant="outline" disabled={!!busy}
+                    onClick={() => runAi(selected, `Ampliando ${enhanceScale}× (IA)…`, (b) => aiUpscale(b, enhanceScale))}>
+                    <Maximize2 className="h-4 w-4" /> Melhorar/upscale (IA) · {enhanceScale}×
+                  </Button>
+                  <Button className="w-full justify-start" size="sm" variant="outline" disabled={!!busy}
+                    onClick={() => runAi(selected, 'Restaurando (IA)…', aiRestore)}>
+                    <Sparkles className="h-4 w-4" /> Restaurar (IA)
+                  </Button>
+                </div>
               </div>
 
               {/* Export / use */}
