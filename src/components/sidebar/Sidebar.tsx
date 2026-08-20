@@ -1,4 +1,4 @@
-import { LayoutGrid, Download, X, Layers, ImageOff, Trash2 } from 'lucide-react'
+import { AlertCircle, Download, ImageOff, Layers, LayoutGrid, LoaderCircle, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,28 +24,49 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCanvasWidthCm = useGangSheetStore((s) => s.setCanvasWidthCm)
   const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
-  const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
+  const pricePerMeter = useGangSheetStore((s) => s.pricePerMeter)
+  const setPricePerMeter = useGangSheetStore((s) => s.setPricePerMeter)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
+  const packingError = useGangSheetStore((s) => s.packingError)
   const reset = useGangSheetStore((s) => s.reset)
   const [isExporting, setIsExporting] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
 
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
 
   const handleGenerateLayout = () => {
-    generateLayout()
-    onClose?.()
+    if (hasLayout && !window.confirm('Gerar novamente substituirá os ajustes manuais da folha. Continuar?')) {
+      return
+    }
+
+    setIsGenerating(true)
+    window.setTimeout(() => {
+      generateLayout()
+      setIsGenerating(false)
+      const error = useGangSheetStore.getState().packingError
+      if (error) {
+        toast({ variant: 'destructive', title: 'Não foi possível gerar a folha', description: error })
+        return
+      }
+      toast({
+        title: 'Layout gerado',
+        description: 'Revise as artes na área de trabalho antes de exportar.',
+      })
+      onClose?.()
+    }, 0)
   }
 
   const handleClearAll = () => {
     if (!window.confirm('Remover todas as imagens e o layout gerado?')) return
     reset()
+    toast({ title: 'Fila limpa', description: 'As imagens e o layout foram removidos.' })
   }
 
   const handleDownload = async () => {
     setIsExporting(true)
+    toast({ title: 'Preparando exportação', description: 'Gerando seu arquivo em 300 DPI. Não feche esta página.' })
     try {
       await downloadGangSheets(pages, canvasWidthCm, maxHeightCm)
       const pageCount = pages.filter((p) => p.items.length > 0).length
@@ -68,7 +89,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
+    <aside id="builder-sidebar" aria-label="Painel de montagem" className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -80,7 +101,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
           </div>
         </div>
         {onClose && (
-          <Button variant="ghost" size="icon" onClick={onClose} title="Fechar" className="shrink-0 md:hidden">
+          <Button variant="ghost" size="icon" onClick={onClose} title="Fechar" aria-label="Fechar painel de montagem" className="shrink-0 md:hidden">
             <X className="h-4 w-4" />
           </Button>
         )}
@@ -88,6 +109,16 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
       <div className="space-y-3 px-4 py-3">
         <ImageUploadZone />
+
+        {packingError && (
+          <div role="alert" className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">Ajuste necessário para gerar a folha</p>
+              <p className="mt-0.5 text-destructive/90">{packingError}</p>
+            </div>
+          </div>
+        )}
 
         <div className="space-y-1.5 rounded-lg border bg-muted/40 p-2.5">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -100,6 +131,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 id="canvas-width"
                 type="number"
                 min={1}
+                inputMode="decimal"
                 value={canvasWidthCm}
                 onChange={(e) => setCanvasWidthCm(Number(e.target.value))}
               />
@@ -110,6 +142,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 id="max-height"
                 type="number"
                 min={1}
+                inputMode="decimal"
                 value={maxHeightCm}
                 onChange={(e) => setMaxHeightCm(Number(e.target.value))}
               />
@@ -125,22 +158,24 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 type="number"
                 min={0}
                 step={0.1}
+                inputMode="decimal"
                 value={itemGapCm}
                 onChange={(e) => setItemGapCm(Number(e.target.value))}
               />
             </div>
             <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
-                Custo/cm² (R$)
+              <Label htmlFor="price-meter" className="truncate" title="Preço do filme por metro linear">
+                Preço/metro (R$)
               </Label>
               <Input
-                id="cost-cm2"
+                id="price-meter"
                 type="number"
                 min={0}
                 step={0.01}
-                value={costPerCm2 || ''}
+                inputMode="decimal"
+                value={pricePerMeter || ''}
                 placeholder="0.00"
-                onChange={(e) => setCostPerCm2(Number(e.target.value))}
+                onChange={(e) => setPricePerMeter(Number(e.target.value))}
               />
             </div>
           </div>
@@ -160,6 +195,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
             size="sm"
             className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
             onClick={handleClearAll}
+            aria-label="Limpar todas as imagens e o layout"
           >
             <Trash2 className="h-3 w-3" />
             Limpar tudo
@@ -193,21 +229,32 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
         <Button
           className="glow-primary w-full"
-          disabled={images.length === 0}
+          disabled={images.length === 0 || isGenerating || isExporting}
           onClick={handleGenerateLayout}
+          aria-busy={isGenerating}
         >
-          <LayoutGrid className="h-4 w-4" />
-          Gerar Layout
+          {isGenerating ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <LayoutGrid className="h-4 w-4" aria-hidden="true" />}
+          {isGenerating ? 'Gerando layout...' : hasLayout ? 'Gerar novamente' : 'Gerar layout'}
         </Button>
         <Button
           className="w-full"
           variant="secondary"
-          disabled={!hasLayout || isExporting}
+          disabled={!hasLayout || isExporting || isGenerating || Boolean(packingError)}
           onClick={handleDownload}
+          aria-busy={isExporting}
         >
-          <Download className="h-4 w-4" />
-          {isExporting ? 'Exportando...' : 'Download DTF'}
+          {isExporting ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+          {isExporting ? 'Gerando arquivo...' : 'Baixar DTF'}
         </Button>
+        <p aria-live="polite" className="min-h-4 text-center text-[11px] text-muted-foreground">
+          {isGenerating
+            ? 'Organizando as artes na folha...'
+            : isExporting
+              ? 'O download começará automaticamente quando estiver pronto.'
+              : hasLayout
+                ? 'Arquivo PNG transparente em 300 DPI.'
+                : 'Gere o layout para liberar o download.'}
+        </p>
       </div>
     </aside>
   )

@@ -27,7 +27,7 @@ export default function TopNav() {
       </div>
 
       {/* Nav pills */}
-      <nav className="mx-auto flex items-center gap-1 rounded-full border bg-muted/40 p-1 backdrop-blur">
+      <nav aria-label="Navegação principal" className="mx-auto flex items-center gap-1 rounded-full border bg-muted/40 p-1 backdrop-blur">
         {NAV.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
@@ -41,7 +41,7 @@ export default function TopNav() {
               )
             }
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">{label}</span>
           </NavLink>
         ))}
@@ -50,7 +50,7 @@ export default function TopNav() {
       {/* Right controls */}
       <div className="flex items-center gap-1">
         <ThemeToggle />
-        <Button variant="ghost" size="icon" onClick={signOut} title="Sair">
+        <Button variant="ghost" size="icon" onClick={signOut} title="Sair" aria-label="Sair da conta">
           <LogOut className="h-4 w-4" />
         </Button>
       </div>

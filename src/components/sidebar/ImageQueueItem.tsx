@@ -28,6 +28,8 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
             size="icon"
             className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
             onClick={() => removeImage(image.id)}
+            aria-label={`Remover ${image.file.name} da fila`}
+            title={`Remover ${image.file.name}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
@@ -40,6 +42,8 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
               id={`qty-${image.id}`}
               type="number"
               min={1}
+              inputMode="numeric"
+              aria-describedby={`details-${image.id}`}
               value={image.quantity}
               onChange={(e) => updateQuantity(image.id, Number(e.target.value))}
             />
@@ -53,12 +57,14 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
               type="number"
               min={0.1}
               step={0.1}
+              inputMode="decimal"
+              aria-describedby={`details-${image.id}`}
               value={image.widthCm}
               onChange={(e) => updateWidthCm(image.id, Number(e.target.value))}
             />
           </div>
         </div>
-        <p className="text-[11px] text-muted-foreground">
+        <p id={`details-${image.id}`} className="text-[11px] text-muted-foreground">
           Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
         </p>
       </div>

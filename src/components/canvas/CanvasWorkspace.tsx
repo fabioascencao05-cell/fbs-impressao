@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Layers, Trash2 } from 'lucide-react'
+import { AlertCircle, Layers, Trash2 } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { DISPLAY_PX_PER_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { toast } from '@/hooks/use-toast'
 import Ruler from './Ruler'
 import CanvasPage, { type SelectionInfo } from './CanvasPage'
 import CanvasToolbar from './CanvasToolbar'
 import type { PackedPage } from '@/types'
+import { calculateFilmCost } from '@/lib/pricing'
 
 function sheetEfficiency(page: PackedPage, canvasWidthCm: number): number {
   if (page.usedHeightCm <= 0) return 0
@@ -17,7 +19,9 @@ function sheetEfficiency(page: PackedPage, canvasWidthCm: number): number {
 }
 
 export default function CanvasWorkspace() {
+  const images = useGangSheetStore((s) => s.images)
   const pages = useGangSheetStore((s) => s.pages)
+  const packingError = useGangSheetStore((s) => s.packingError)
   const maxHeightCm = useGangSheetStore((s) => s.maxHeightCm)
   const canvasWidthCm = useGangSheetStore((s) => s.canvasWidthCm)
   const zoom = useGangSheetStore((s) => s.zoom)
@@ -26,9 +30,10 @@ export default function CanvasWorkspace() {
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
   const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
+  const pricePerMeter = useGangSheetStore((s) => s.pricePerMeter)
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
+  const [isRegenerating, setIsRegenerating] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const hadPagesRef = useRef(false)
@@ -68,8 +73,21 @@ export default function CanvasWorkspace() {
   )
 
   const handleRegenerate = useCallback(() => {
-    generateLayout()
-    setSelection(null)
+    if (!window.confirm('Re-empacotar substituirá os ajustes manuais desta folha. Continuar?')) {
+      return
+    }
+    setIsRegenerating(true)
+    window.setTimeout(() => {
+      generateLayout()
+      setSelection(null)
+      setIsRegenerating(false)
+      const error = useGangSheetStore.getState().packingError
+      toast(
+        error
+          ? { variant: 'destructive', title: 'Não foi possível reorganizar a folha', description: error }
+          : { title: 'Folha reorganizada', description: 'Confira a posição das artes antes de exportar.' }
+      )
+    }, 0)
   }, [generateLayout])
 
   const handleZoomFit = useCallback(() => {
@@ -141,7 +159,9 @@ export default function CanvasWorkspace() {
   // Delete key removes the selected art.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' && selection) {
+      const target = e.target as HTMLElement | null
+      const isTyping = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable
+      if (e.key === 'Delete' && selection && !isTyping) {
         e.preventDefault()
         handleDeleteSelected()
       }
@@ -161,17 +181,34 @@ export default function CanvasWorkspace() {
           onDeleteSelected={handleDeleteSelected}
           onDuplicateSelected={handleDuplicateSelected}
           onRegenerate={handleRegenerate}
+          isRegenerating={isRegenerating}
         />
       )}
 
       <div ref={scrollRef} className="workspace-bg flex-1 overflow-auto">
+        {packingError && (
+          <div role="alert" className="m-3 flex max-w-3xl items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive md:mx-auto">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div>
+              <span className="font-semibold">O layout não pode ser gerado. </span>
+              {packingError}
+            </div>
+          </div>
+        )}
         {visiblePages.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8">
             <div className="flex max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed bg-card/50 px-8 py-10 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <Layers className="h-7 w-7" />
               </div>
-              <p className="text-base font-semibold text-foreground">Sua folha aparece aqui</p>
+              <p className="text-base font-semibold text-foreground">
+                {images.length > 0 ? 'Suas artes estão prontas para montar' : 'Sua folha aparece aqui'}
+              </p>
+              {images.length > 0 ? (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {images.length} arte(s) na fila. Revise tamanho e quantidade no painel e clique em “Gerar layout”.
+                </p>
+              ) : null}
               <ol className="w-full space-y-2 text-left text-xs text-muted-foreground">
                 <li className="flex gap-2">
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
@@ -205,10 +242,8 @@ export default function CanvasWorkspace() {
             {visiblePages.map((page) => {
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
-              // DTF é cobrado pelo filme consumido (largura da folha × altura
-              // usada), não só pela área das artes — os espaços também gastam filme.
-              const filmAreaCm2 = canvasWidthCm * page.usedHeightCm
-              const pageCost = costPerCm2 > 0 ? filmAreaCm2 * costPerCm2 : 0
+              // DTF é cobrado pelo comprimento linear de filme realmente usado.
+              const pageCost = calculateFilmCost(page.usedHeightCm, pricePerMeter)
               return (
                 <div key={page.index} className="flex flex-col">
                   <div className="mb-2 flex w-full items-center justify-between gap-4 rounded-lg border bg-card/70 px-3 py-1.5">
@@ -225,7 +260,7 @@ export default function CanvasWorkspace() {
                         {Math.round(eff * 100)}% aproveitado
                       </Badge>
                       {pageCost > 0 && (
-                        <Badge variant="outline" title="Custo do filme usado (largura × altura usada × custo/cm²)">
+                        <Badge variant="outline" title="Custo do filme (altura usada em metros × preço por metro)">
                           R$ {pageCost.toFixed(2)}
                         </Badge>
                       )}
@@ -234,6 +269,7 @@ export default function CanvasWorkspace() {
                         size="icon"
                         className="h-6 w-6 text-muted-foreground hover:text-destructive"
                         title="Apagar esta página"
+                        aria-label={`Apagar página ${page.index + 1}`}
                         onClick={() => handleDeletePage(page.index)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />

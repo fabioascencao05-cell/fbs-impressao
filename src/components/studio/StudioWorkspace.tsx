@@ -21,7 +21,7 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { removeBackground } from '@/lib/imageTools/removeBackground'
 import { enhanceImage } from '@/lib/imageTools/enhanceImage'
 import { vectorizeToSvg, svgToPngBlob, type VectorizePreset } from '@/lib/imageTools/vectorize'
-import { downloadBlob, downloadText, withExtension } from '@/lib/imageTools/imageUtils'
+import { convertBlobToPng, downloadBlob, downloadText, loadImageFromBlob, withExtension } from '@/lib/imageTools/imageUtils'
 import type { StudioAsset } from './studioTypes'
 
 const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/webp'])
@@ -30,20 +30,12 @@ const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const CHECKER =
   'conic-gradient(#c9ccd4 0deg 90deg, #f4f5f7 90deg 180deg, #c9ccd4 180deg 270deg, #f4f5f7 270deg 360deg)'
 
-function loadDims(blob: Blob): Promise<{ width: number; height: number }> {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(blob)
-    const img = new Image()
-    img.onload = () => {
-      resolve({ width: img.naturalWidth, height: img.naturalHeight })
-      URL.revokeObjectURL(url)
-    }
-    img.onerror = () => {
-      resolve({ width: 0, height: 0 })
-      URL.revokeObjectURL(url)
-    }
-    img.src = url
-  })
+async function loadDims(blob: Blob): Promise<{ width: number; height: number }> {
+  const img = await loadImageFromBlob(blob)
+  if (!img.naturalWidth || !img.naturalHeight) {
+    throw new Error('A imagem está corrompida ou não possui dimensões válidas.')
+  }
+  return { width: img.naturalWidth, height: img.naturalHeight }
 }
 
 export default function StudioWorkspace() {
@@ -77,22 +69,36 @@ export default function StudioWorkspace() {
   const addFiles = useCallback(async (files: File[]) => {
     const accepted = files.filter((f) => ACCEPTED.has(f.type))
     const skipped = files.length - accepted.length
+    let corrupted = 0
     const created: StudioAsset[] = []
     for (const file of accepted) {
-      const url = URL.createObjectURL(file)
-      const { width, height } = await loadDims(file)
-      created.push({
-        id: crypto.randomUUID(),
-        name: file.name,
-        originalUrl: url,
-        resultBlob: file,
-        resultUrl: url,
-        svg: null,
-        width,
-        height,
-        busy: null,
-        progress: null,
-      })
+      try {
+        const png = await convertBlobToPng(file)
+        const { width, height } = await loadDims(png)
+        if (!mountedRef.current) {
+          for (const asset of created) {
+            URL.revokeObjectURL(asset.originalUrl)
+            if (asset.resultUrl !== asset.originalUrl) URL.revokeObjectURL(asset.resultUrl)
+          }
+          return
+        }
+        const originalUrl = URL.createObjectURL(file)
+        const resultUrl = png === file ? originalUrl : URL.createObjectURL(png)
+        created.push({
+          id: crypto.randomUUID(),
+          name: file.name,
+          originalUrl,
+          resultBlob: png,
+          resultUrl,
+          svg: null,
+          width,
+          height,
+          busy: null,
+          progress: null,
+        })
+      } catch {
+        corrupted += 1
+      }
     }
     if (created.length) {
       setAssets((prev) => [...prev, ...created])
@@ -100,6 +106,9 @@ export default function StudioWorkspace() {
     }
     if (skipped > 0) {
       toast({ variant: 'destructive', title: 'Alguns arquivos foram ignorados', description: `${skipped} arquivo(s) não são PNG/JPG/WebP.` })
+    }
+    if (corrupted > 0) {
+      toast({ variant: 'destructive', title: 'Imagens inválidas', description: `${corrupted} arquivo(s) estão vazios, corrompidos ou não puderam ser lidos.` })
     }
   }, [])
 
@@ -200,13 +209,27 @@ export default function StudioWorkspace() {
 
   const sendToSheet = useCallback(
     async (list: StudioAsset[]) => {
-      const files = list.map((a) => new File([a.resultBlob], withExtension(a.name, 'png'), { type: 'image/png' }))
-      const { added } = await addImages(files)
-      toast({ title: 'Enviado para a folha', description: `${added} arte(s) na fila do montador.` })
-      navigate('/montar')
+      try {
+        const pngs = await Promise.all(list.map((a) => convertBlobToPng(a.resultBlob)))
+        const files = pngs.map((png, index) => new File([png], withExtension(list[index].name, 'png'), { type: 'image/png' }))
+        const { added } = await addImages(files)
+        toast({ title: 'Enviado para a folha', description: `${added} arte(s) na fila do montador.` })
+        navigate('/montar')
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Falha ao enviar', description: err instanceof Error ? err.message : 'Não foi possível converter a imagem para PNG.' })
+      }
     },
     [addImages, navigate]
   )
+
+  const downloadPng = useCallback(async (asset: StudioAsset) => {
+    try {
+      const png = await convertBlobToPng(asset.resultBlob)
+      downloadBlob(png, withExtension(asset.name, 'png'))
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Falha ao baixar PNG', description: err instanceof Error ? err.message : 'Não foi possível converter a imagem para PNG.' })
+    }
+  }, [])
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
@@ -447,7 +470,7 @@ export default function StudioWorkspace() {
               {/* Export / use */}
               <div className="mt-auto space-y-2 rounded-xl border bg-card/40 p-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" disabled={!!busy} onClick={() => downloadBlob(selected.resultBlob, withExtension(selected.name, 'png'))}>
+                  <Button variant="outline" size="sm" disabled={!!busy} onClick={() => downloadPng(selected)}>
                     <Download className="h-4 w-4" /> PNG
                   </Button>
                   <Button variant="outline" size="sm" disabled={!!busy || !selected.svg} onClick={() => selected.svg && downloadText(selected.svg, withExtension(selected.name, 'svg'))} title={selected.svg ? 'Baixar SVG para o Corel' : 'Vetorize primeiro para habilitar o SVG'}>

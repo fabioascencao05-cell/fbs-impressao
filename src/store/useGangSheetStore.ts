@@ -1,12 +1,14 @@
 import { create } from 'zustand'
-import { packImages } from '@/lib/binPacking'
+import { packImages, PackingError } from '@/lib/binPacking'
 import { rotatedAabbCm } from '@/lib/geometry'
-import { computeContentBox } from '@/lib/trimImage'
+import { analyzeImageForPacking } from '@/lib/packing/mask'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
   DEFAULT_MAX_HEIGHT_CM,
   EXPORT_PX_PER_CM,
+  MAX_FILES_PER_BATCH,
+  MAX_IMAGE_FILE_BYTES,
   ZOOM_MAX,
   ZOOM_MIN,
 } from '@/lib/constants'
@@ -14,15 +16,16 @@ import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
-interface GangSheetState {
+export interface GangSheetState {
   images: GangImage[]
   maxHeightCm: number
   canvasWidthCm: number
   itemGapCm: number
   pages: PackedPage[]
+  packingError: string | null
   zoom: number
   sheetBackgroundColor: string
-  costPerCm2: number
+  pricePerMeter: number
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -38,7 +41,7 @@ interface GangSheetState {
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
-  setCostPerCm2: (cost: number) => void
+  setPricePerMeter: (price: number) => void
   reset: () => void
 }
 
@@ -62,42 +65,49 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   canvasWidthCm: DEFAULT_CANVAS_WIDTH_CM,
   itemGapCm: DEFAULT_ITEM_GAP_CM,
   pages: [],
+  packingError: null,
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
-  costPerCm2: 0,
+  pricePerMeter: 0,
 
   addImages: async (files) => {
-    const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
-    const skipped = files.length - accepted.length
+    const candidates = files.slice(0, MAX_FILES_PER_BATCH)
+    const accepted = candidates.filter((f) => ACCEPTED_TYPES.has(f.type) && f.size > 0 && f.size <= MAX_IMAGE_FILE_BYTES)
+    let skipped = files.length - accepted.length
     const newImages: GangImage[] = []
 
     for (const file of accepted) {
-      const box = await computeContentBox(file)
-      const aspectRatio = box.heightPx / box.widthPx
-      // Real-world size at print resolution — never altered/clamped, so the
-      // uploaded artwork keeps its exact measure regardless of sheet size.
-      // Rounded to 1 decimal so the sidebar input shows a clean value.
-      const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
-      const heightCm = widthCm * aspectRatio
-      newImages.push({
-        id: crypto.randomUUID(),
-        file,
-        previewUrl: URL.createObjectURL(file),
-        naturalWidthPx: box.naturalWidthPx,
-        naturalHeightPx: box.naturalHeightPx,
-        aspectRatio,
-        quantity: 1,
-        widthCm,
-        heightCm,
-        contentXPx: box.xPx,
-        contentYPx: box.yPx,
-        contentWidthPx: box.widthPx,
-        contentHeightPx: box.heightPx,
-      })
+      try {
+        const box = await analyzeImageForPacking(file)
+        const aspectRatio = box.heightPx / box.widthPx
+        // Real-world size at print resolution — never altered/clamped, so the
+        // uploaded artwork keeps its exact measure regardless of sheet size.
+        // Rounded to 1 decimal so the sidebar input shows a clean value.
+        const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
+        const heightCm = widthCm * aspectRatio
+        newImages.push({
+          id: crypto.randomUUID(),
+          file,
+          previewUrl: URL.createObjectURL(file),
+          naturalWidthPx: box.naturalWidthPx,
+          naturalHeightPx: box.naturalHeightPx,
+          aspectRatio,
+          quantity: 1,
+          widthCm,
+          heightCm,
+          contentXPx: box.xPx,
+          contentYPx: box.yPx,
+          contentWidthPx: box.widthPx,
+          contentHeightPx: box.heightPx,
+          packingMask: box.packingMask,
+        })
+      } catch {
+        skipped += 1
+      }
     }
 
-    set((state) => ({ images: [...state.images, ...newImages] }))
-    return { added: accepted.length, skipped }
+    set((state) => ({ images: [...state.images, ...newImages], packingError: null }))
+    return { added: newImages.length, skipped }
   },
 
   removeImage: (id) => {
@@ -147,8 +157,16 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   generateLayout: () => {
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
-    set({ pages })
+    try {
+      const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
+      set({ pages, packingError: null })
+    } catch (error) {
+      const packingError =
+        error instanceof PackingError || error instanceof Error
+          ? error.message
+          : 'Nao foi possivel montar as artes nesta folha.'
+      set({ packingError })
+    }
   },
 
   updatePlacedItem: (pageIndex, itemId, patch) => {
@@ -204,18 +222,19 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
+  setPricePerMeter: (price) =>
+    set({ pricePerMeter: Number.isFinite(price) ? Math.max(0, price) : 0 }),
 
   reset: () => {
     set((state) => {
       state.images.forEach((img) => URL.revokeObjectURL(img.previewUrl))
-      return { images: [], pages: [] }
+      return { images: [], pages: [], packingError: null }
     })
   },
 }))
 
 // Dev-only handle for automated end-to-end testing of layout/export.
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   ;(window as unknown as { __gangStore?: typeof useGangSheetStore }).__gangStore =
     useGangSheetStore
 }

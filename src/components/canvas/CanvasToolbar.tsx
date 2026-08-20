@@ -25,6 +25,7 @@ interface CanvasToolbarProps {
   onDeleteSelected: () => void
   onDuplicateSelected: () => void
   onRegenerate: () => void
+  isRegenerating: boolean
 }
 
 export default function CanvasToolbar({
@@ -35,6 +36,7 @@ export default function CanvasToolbar({
   onDeleteSelected,
   onDuplicateSelected,
   onRegenerate,
+  isRegenerating,
 }: CanvasToolbarProps) {
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
   const setSheetBackgroundColor = useGangSheetStore((s) => s.setSheetBackgroundColor)
@@ -49,10 +51,11 @@ export default function CanvasToolbar({
           onClick={() => onZoom(zoom - ZOOM_STEP)}
           disabled={zoom <= ZOOM_MIN}
           title="Diminuir zoom"
+          aria-label="Diminuir zoom"
         >
           <ZoomOut className="h-4 w-4" />
         </Button>
-        <span className="w-12 text-center text-xs tabular-nums text-muted-foreground">
+        <span aria-live="polite" className="w-12 text-center text-xs tabular-nums text-muted-foreground">
           {Math.round(zoom * 100)}%
         </span>
         <Button
@@ -62,6 +65,7 @@ export default function CanvasToolbar({
           onClick={() => onZoom(zoom + ZOOM_STEP)}
           disabled={zoom >= ZOOM_MAX}
           title="Aumentar zoom"
+          aria-label="Aumentar zoom"
         >
           <ZoomIn className="h-4 w-4" />
         </Button>
@@ -71,6 +75,7 @@ export default function CanvasToolbar({
           className="h-7 w-7"
           onClick={onZoomFit}
           title="Ajustar à tela · dica: Ctrl/⌘ + scroll aproxima e afasta"
+          aria-label="Ajustar folha à tela"
         >
           <Maximize className="h-4 w-4" />
         </Button>
@@ -89,6 +94,8 @@ export default function CanvasToolbar({
             type="button"
             title={preset.label}
             onClick={() => setSheetBackgroundColor(preset.value)}
+            aria-label={preset.label}
+            aria-pressed={sheetBackgroundColor === preset.value}
             className={`h-6 w-6 rounded-full border-2 transition-transform hover:scale-110 ${
               sheetBackgroundColor === preset.value ? 'border-primary' : 'border-border'
             }`}
@@ -100,15 +107,24 @@ export default function CanvasToolbar({
           value={sheetBackgroundColor.startsWith('#') ? sheetBackgroundColor : '#ffffff'}
           onChange={(e) => setSheetBackgroundColor(e.target.value)}
           title="Escolher outra cor de fundo"
+          aria-label="Escolher outra cor de fundo da folha"
           className="h-6 w-6 cursor-pointer rounded-full border-2 border-border bg-transparent p-0"
         />
       </div>
 
       <Separator orientation="vertical" className="h-6" />
 
-      <Button variant="outline" size="sm" className="h-8" onClick={onRegenerate} title="Reorganiza tudo automaticamente (descarta ajustes manuais)">
-        <RefreshCw className="h-4 w-4" />
-        Re-empacotar
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8"
+        onClick={onRegenerate}
+        disabled={isRegenerating}
+        aria-busy={isRegenerating}
+        title="Reorganiza tudo automaticamente (descarta ajustes manuais)"
+      >
+        <RefreshCw className={`h-4 w-4 ${isRegenerating ? 'animate-spin' : ''}`} aria-hidden="true" />
+        {isRegenerating ? 'Organizando...' : 'Re-empacotar'}
       </Button>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -120,6 +136,7 @@ export default function CanvasToolbar({
               className="h-8"
               onClick={onDuplicateSelected}
               title="Duplicar arte selecionada"
+              aria-label="Duplicar arte selecionada"
             >
               <Copy className="h-4 w-4" />
               Duplicar
@@ -130,13 +147,14 @@ export default function CanvasToolbar({
               className="h-8"
               onClick={onDeleteSelected}
               title="Remover arte selecionada (Delete)"
+              aria-label="Remover arte selecionada"
             >
               <Trash2 className="h-4 w-4" />
               Remover
             </Button>
           </>
         ) : (
-          <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+          <span className="hidden items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground xl:flex">
             <MousePointer2 className="h-3.5 w-3.5" />
             Clique numa arte para mover, duplicar, girar ou redimensionar
           </span>

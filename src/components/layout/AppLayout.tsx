@@ -41,10 +41,38 @@ export default function AppLayout() {
     }
   }, [])
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && sidebarOpen) setSidebarOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [sidebarOpen])
+
+  const resizeSidebarWithKeyboard = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 40 : 20
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      setSidebarWidth((width) => Math.max(SIDEBAR_MIN, width - step))
+    }
+    if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      setSidebarWidth((width) => Math.min(SIDEBAR_MAX, width + step))
+    }
+  }, [])
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden md:flex-row">
       <div className="glass-panel flex items-center gap-2 border-b px-3 py-2 md:hidden">
-        <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} title="Abrir menu">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setSidebarOpen(true)}
+          title="Abrir painel de montagem"
+          aria-label="Abrir painel de montagem"
+          aria-expanded={sidebarOpen}
+          aria-controls="builder-sidebar"
+        >
           <Menu className="h-5 w-5" />
         </Button>
         <Layers className="h-4 w-4 text-primary" />
@@ -55,6 +83,7 @@ export default function AppLayout() {
         <div
           className="fixed inset-0 z-40 bg-black/40 md:hidden"
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
@@ -70,8 +99,16 @@ export default function AppLayout() {
       {/* Draggable divider (desktop only) — resize the sidebar with the mouse. */}
       <div
         onMouseDown={onDragStart}
+        onKeyDown={resizeSidebarWithKeyboard}
+        role="separator"
+        aria-label="Redimensionar painel de montagem"
+        aria-orientation="vertical"
+        aria-valuemin={SIDEBAR_MIN}
+        aria-valuemax={SIDEBAR_MAX}
+        aria-valuenow={sidebarWidth}
+        tabIndex={0}
         title="Arraste para redimensionar a barra lateral"
-        className="hidden w-1.5 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary md:block"
+        className="hidden w-1.5 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary focus-visible:bg-primary focus-visible:outline-none md:block"
       />
 
       <CanvasWorkspace />

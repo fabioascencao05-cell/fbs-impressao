@@ -1,3 +1,10 @@
+/** A compact, cropped bitmap: 1 means that the pixel contains printable ink. */
+export interface PackingMask {
+  widthPx: number
+  heightPx: number
+  data: Uint8Array
+}
+
 export interface GangImage {
   id: string
   file: File
@@ -13,6 +20,9 @@ export interface GangImage {
   contentYPx: number
   contentWidthPx: number
   contentHeightPx: number
+  // Downsampled alpha/ink mask used by the shape-aware packer. Optional so
+  // previously created/injected GangImage objects still use the safe fallback.
+  packingMask?: PackingMask
 }
 
 export interface PlacedItem {

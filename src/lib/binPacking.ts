@@ -1,5 +1,67 @@
 import { rotatedAabbCm } from '@/lib/geometry'
+import { packImagesByShape } from '@/lib/packing/shapePacking'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
+
+export interface ImpossiblePackingItem {
+  id: string
+  name: string
+  widthCm: number
+  heightCm: number
+  reason: string
+}
+
+export class PackingError extends Error {
+  readonly impossibleItems: ImpossiblePackingItem[]
+
+  constructor(message: string, impossibleItems: ImpossiblePackingItem[] = []) {
+    super(message)
+    this.name = 'PackingError'
+    this.impossibleItems = impossibleItems
+  }
+}
+
+/** Fails before packing instead of ever placing an item beyond sheet bounds. */
+export function validatePackingRequest(
+  images: GangImage[],
+  maxHeightCm: number,
+  canvasWidthCm: number,
+  itemGapCm: number
+): void {
+  if (!Number.isFinite(canvasWidthCm) || canvasWidthCm <= 0 || !Number.isFinite(maxHeightCm) || maxHeightCm <= 0) {
+    throw new PackingError('As dimensoes da folha precisam ser maiores que zero.')
+  }
+  if (!Number.isFinite(itemGapCm) || itemGapCm < 0) {
+    throw new PackingError('O espacamento entre artes precisa ser zero ou maior.')
+  }
+
+  const impossibleItems: ImpossiblePackingItem[] = []
+  for (const image of images) {
+    let reason = ''
+    if (!Number.isFinite(image.widthCm) || !Number.isFinite(image.heightCm) || image.widthCm <= 0 || image.heightCm <= 0) {
+      reason = 'dimensoes invalidas'
+    } else if (!Number.isInteger(image.quantity) || image.quantity < 1) {
+      reason = 'quantidade invalida'
+    } else {
+      const fitsOriginal = image.widthCm <= canvasWidthCm + 1e-9 && image.heightCm <= maxHeightCm + 1e-9
+      const fitsRotated = image.heightCm <= canvasWidthCm + 1e-9 && image.widthCm <= maxHeightCm + 1e-9
+      if (!fitsOriginal && !fitsRotated) reason = 'maior que a folha nas duas orientacoes'
+    }
+    if (reason) {
+      impossibleItems.push({
+        id: image.id,
+        name: image.file?.name || image.id,
+        widthCm: image.widthCm,
+        heightCm: image.heightCm,
+        reason,
+      })
+    }
+  }
+
+  if (impossibleItems.length > 0) {
+    const names = impossibleItems.map((item) => item.name).join(', ')
+    throw new PackingError(`Estas artes nao cabem na folha: ${names}.`, impossibleItems)
+  }
+}
 
 interface PackableUnit {
   id: string
@@ -166,12 +228,13 @@ function findBestFit(
  *   top-left of the on-sheet bounding box. The renderer reads all three, so the
  *   drawn art matches the reserved box exactly. Sizes are never changed.
  */
-export function packImages(
+export function packImagesMaxRects(
   images: GangImage[],
   maxHeightCm: number,
   canvasWidthCm: number,
   itemGapCm: number
 ): PackedPage[] {
+  validatePackingRequest(images, maxHeightCm, canvasWidthCm, itemGapCm)
   const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
 
   const buckets: PageBucket[] = []
@@ -179,7 +242,9 @@ export function packImages(
   const openNewBucket = (): PageBucket => {
     const bucket: PageBucket = {
       items: [],
-      freeRects: [{ x: 0, y: 0, width: canvasWidthCm, height: maxHeightCm }],
+      // The virtual extra gap on the right/bottom keeps the configured gap
+      // between rectangles without requiring blank space at sheet edges.
+      freeRects: [{ x: 0, y: 0, width: canvasWidthCm + itemGapCm, height: maxHeightCm + itemGapCm }],
     }
     buckets.push(bucket)
     return bucket
@@ -207,7 +272,10 @@ export function packImages(
 
     if (!target) {
       const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0], rotated: false }
+      const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
+      // validatePackingRequest guarantees at least one orientation fits.
+      if (!fit) throw new PackingError(`A arte ${unit.sourceImageId} nao coube em uma folha vazia.`)
+      target = { bucket, rect: fit.rect, rotated: fit.rotated }
     }
 
     const { bucket, rect, rotated } = target
@@ -248,4 +316,22 @@ export function packImages(
       0
     ),
   }))
+}
+
+/**
+ * Uses real alpha/colour silhouettes when available. MaxRects remains the
+ * deterministic fallback for old items, very large jobs, or grid limits.
+ */
+export function packImages(
+  images: GangImage[],
+  maxHeightCm: number,
+  canvasWidthCm: number,
+  itemGapCm: number
+): PackedPage[] {
+  validatePackingRequest(images, maxHeightCm, canvasWidthCm, itemGapCm)
+  if (images.some((image) => image.packingMask)) {
+    const shapePacked = packImagesByShape(images, maxHeightCm, canvasWidthCm, itemGapCm)
+    if (shapePacked) return shapePacked
+  }
+  return packImagesMaxRects(images, maxHeightCm, canvasWidthCm, itemGapCm)
 }

@@ -19,10 +19,22 @@ const SCAN_MAX_SIDE = 512
  */
 export function computeContentBox(file: File): Promise<ContentBox> {
   return new Promise((resolve, reject) => {
+    if (file.size === 0) {
+      reject(new Error('O arquivo de imagem está vazio.'))
+      return
+    }
+
     const img = new Image()
+    const objectUrl = URL.createObjectURL(file)
+    const cleanup = () => URL.revokeObjectURL(objectUrl)
     img.onload = () => {
+      cleanup()
       const naturalWidthPx = img.naturalWidth
       const naturalHeightPx = img.naturalHeight
+      if (!naturalWidthPx || !naturalHeightPx) {
+        reject(new Error('A imagem está corrompida ou não possui dimensões válidas.'))
+        return
+      }
 
       const scale = Math.min(1, SCAN_MAX_SIDE / Math.max(naturalWidthPx, naturalHeightPx))
       const scanWidth = Math.max(1, Math.round(naturalWidthPx * scale))
@@ -36,7 +48,12 @@ export function computeContentBox(file: File): Promise<ContentBox> {
         resolve(fullBox(naturalWidthPx, naturalHeightPx))
         return
       }
-      ctx.drawImage(img, 0, 0, scanWidth, scanHeight)
+      try {
+        ctx.drawImage(img, 0, 0, scanWidth, scanHeight)
+      } catch {
+        reject(new Error('Não foi possível processar a imagem enviada.'))
+        return
+      }
 
       let data: Uint8ClampedArray
       try {
@@ -69,17 +86,22 @@ export function computeContentBox(file: File): Promise<ContentBox> {
       }
 
       const invScale = 1 / scale
+      const xPx = Math.max(0, Math.floor(minX * invScale))
+      const yPx = Math.max(0, Math.floor(minY * invScale))
       resolve({
-        xPx: Math.max(0, Math.floor(minX * invScale)),
-        yPx: Math.max(0, Math.floor(minY * invScale)),
-        widthPx: Math.min(naturalWidthPx, Math.ceil((maxX - minX + 1) * invScale)),
-        heightPx: Math.min(naturalHeightPx, Math.ceil((maxY - minY + 1) * invScale)),
+        xPx,
+        yPx,
+        widthPx: Math.min(naturalWidthPx - xPx, Math.ceil((maxX - minX + 1) * invScale)),
+        heightPx: Math.min(naturalHeightPx - yPx, Math.ceil((maxY - minY + 1) * invScale)),
         naturalWidthPx,
         naturalHeightPx,
       })
     }
-    img.onerror = reject
-    img.src = URL.createObjectURL(file)
+    img.onerror = () => {
+      cleanup()
+      reject(new Error('A imagem está corrompida ou em um formato inválido.'))
+    }
+    img.src = objectUrl
   })
 }
 
