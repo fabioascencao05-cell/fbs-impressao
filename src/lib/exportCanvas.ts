@@ -1,106 +1,130 @@
-import * as fabric from 'fabric'
 import JSZip from 'jszip'
-import { EXPORT_PX_PER_CM } from './constants'
+import { EXPORT_END_MARGIN_CM, EXPORT_PX_PER_CM } from './constants'
 import { rotatedAabbCm } from './geometry'
-import type { PackedPage } from '@/types'
+import { validateLayout } from './layoutValidation'
+import type { PackedPage, PlacedItem } from '@/types'
 
-async function renderPageToBlob(
-  page: PackedPage,
-  canvasWidthCm: number,
-  maxHeightCm: number
-): Promise<Blob> {
-  const widthPx = Math.round(canvasWidthCm * EXPORT_PX_PER_CM)
-  const heightPx = Math.round(maxHeightCm * EXPORT_PX_PER_CM)
+const PNG_DPI = 300
 
-  const canvasEl = document.createElement('canvas')
-  canvasEl.width = widthPx
-  canvasEl.height = heightPx
+function exportedHeightCm(page: PackedPage, maxHeightCm: number): number {
+  return Math.min(maxHeightCm, Math.max(0.1, page.usedHeightCm + EXPORT_END_MARGIN_CM))
+}
 
-  const staticCanvas = new fabric.StaticCanvas(canvasEl, {
-    width: widthPx,
-    height: heightPx,
-    backgroundColor: undefined, // transparent background
-  })
-
-  await Promise.all(
-    page.items.map(
-      (item) =>
-        new Promise<void>((resolve, reject) => {
-          fabric.FabricImage.fromURL(item.previewUrl, { crossOrigin: 'anonymous' })
-            .then((img) => {
-              // Crop to the content box and use a centre origin, exactly like the
-              // on-screen editor (CanvasPage), so the exported PNG matches it
-              // pixel for pixel — including auto-rotated art.
-              const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
-              const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
-              img.set({
-                cropX: item.contentXPx,
-                cropY: item.contentYPx,
-                width: item.contentWidthPx,
-                height: item.contentHeightPx,
-                originX: 'center',
-                originY: 'center',
-                left: (item.xCm + box.wCm / 2) * EXPORT_PX_PER_CM,
-                top: (item.yCm + box.hCm / 2) * EXPORT_PX_PER_CM,
-                angle: item.angle ?? 0,
-                scaleX: scale,
-                scaleY: scale,
-                selectable: false,
-              })
-              staticCanvas.add(img)
-              resolve()
-            })
-            .catch(reject)
-        })
-    )
-  )
-
-  staticCanvas.renderAll()
-
-  return new Promise<Blob>((resolve, reject) => {
-    canvasEl.toBlob((blob) => {
-      if (blob) resolve(blob)
-      else reject(new Error('Falha ao gerar PNG do canvas.'))
-      staticCanvas.dispose()
-    }, 'image/png')
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Não foi possível carregar uma arte para a exportação.'))
+    image.src = url
   })
 }
 
-/**
- * Renders every packed page at true 300 DPI (EXPORT_PX_PER_CM) with a
- * transparent background and triggers a download. Multiple pages are
- * bundled into a single ZIP; a single page downloads directly as PNG.
- */
-export async function downloadGangSheets(
-  pages: PackedPage[],
-  canvasWidthCm: number,
-  maxHeightCm: number
-) {
-  const nonEmptyPages = pages.filter((p) => p.items.length > 0)
+function drawItem(ctx: CanvasRenderingContext2D, item: PlacedItem, image: HTMLImageElement): void {
+  const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
+  const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
+  const widthPx = item.contentWidthPx * scale
+  const heightPx = item.contentHeightPx * scale
+
+  ctx.save()
+  ctx.translate((item.xCm + box.wCm / 2) * EXPORT_PX_PER_CM, (item.yCm + box.hCm / 2) * EXPORT_PX_PER_CM)
+  ctx.rotate(((item.angle ?? 0) * Math.PI) / 180)
+  ctx.drawImage(image, item.contentXPx, item.contentYPx, item.contentWidthPx, item.contentHeightPx, -widthPx / 2, -heightPx / 2, widthPx, heightPx)
+  ctx.restore()
+}
+
+/** Adds an accurate 300 DPI pHYs entry to a browser-created PNG. */
+function setPngDpi(blob: Blob, dpi: number): Promise<Blob> {
+  return blob.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer)
+    if (bytes.length < 33 || String.fromCharCode(...bytes.slice(1, 4)) !== 'PNG') return blob
+
+    const pixelsPerMeter = Math.round(dpi / 0.0254)
+    const chunk = new Uint8Array(21)
+    const view = new DataView(chunk.buffer)
+    view.setUint32(0, 9)
+    chunk.set([0x70, 0x48, 0x59, 0x73], 4) // pHYs
+    view.setUint32(8, pixelsPerMeter)
+    view.setUint32(12, pixelsPerMeter)
+    chunk[16] = 1 // unit: metre
+    view.setUint32(17, crc32(chunk.subarray(4, 17)))
+
+    const output = new Uint8Array(bytes.length + chunk.length)
+    output.set(bytes.slice(0, 33), 0)
+    output.set(chunk, 33)
+    output.set(bytes.slice(33), 33 + chunk.length)
+    return new Blob([output], { type: 'image/png' })
+  })
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+async function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
+  const raw = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Falha ao gerar PNG do canvas.'))), 'image/png')
+  })
+  return setPngDpi(raw, PNG_DPI)
+}
+
+async function renderPageToBlob(page: PackedPage, canvasWidthCm: number, maxHeightCm: number): Promise<Blob> {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(canvasWidthCm * EXPORT_PX_PER_CM)
+  canvas.height = Math.round(exportedHeightCm(page, maxHeightCm) * EXPORT_PX_PER_CM)
+  if (canvas.width > 32_767 || canvas.height > 32_767 || canvas.width * canvas.height > 100_000_000) {
+    throw new Error('Esta página ficou grande demais para o navegador exportar com segurança. Diminua a altura máxima para dividir a folha em mais páginas.')
+  }
+  const ctx = canvas.getContext('2d', { alpha: true })
+  if (!ctx) throw new Error('Canvas 2D indisponível neste navegador.')
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+
+  // Decode each original only once, even when the same art appears dezenas de
+  // vezes na folha. Native Canvas retains the source pixels until the deliberate
+  // print-scale conversion and is lighter than Fabric for large queues.
+  const sourceEntries = [...new Set(page.items.map((item) => item.previewUrl))]
+  const images = new Map(await Promise.all(sourceEntries.map(async (url) => [url, await loadImage(url)] as const)))
+  for (const item of page.items) {
+    const image = images.get(item.previewUrl)
+    if (!image) throw new Error('Não foi possível preparar uma arte para a exportação.')
+    drawItem(ctx, item, image)
+  }
+  return canvasToPng(canvas)
+}
+
+/** Renders transparent 300 DPI PNGs using only the film length actually used. */
+export async function downloadGangSheets(pages: PackedPage[], canvasWidthCm: number, maxHeightCm: number) {
+  const nonEmptyPages = pages.filter((page) => page.items.length > 0)
   if (nonEmptyPages.length === 0) return
+  const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm)
+  if (issues.length > 0) throw new Error(`${issues[0].message} Ajuste a arte ou clique em Re-empacotar antes de baixar.`)
 
   if (nonEmptyPages.length === 1) {
-    const blob = await renderPageToBlob(nonEmptyPages[0], canvasWidthCm, maxHeightCm)
-    triggerDownload(blob, 'gang-sheet-dtf.png')
+    const page = nonEmptyPages[0]
+    triggerDownload(await renderPageToBlob(page, canvasWidthCm, maxHeightCm), `gang-sheet-dtf-${exportedHeightCm(page, maxHeightCm).toFixed(1)}cm.png`)
     return
   }
 
   const zip = new JSZip()
   for (const page of nonEmptyPages) {
-    const blob = await renderPageToBlob(page, canvasWidthCm, maxHeightCm)
-    zip.file(`gang-sheet-dtf-pagina-${page.index + 1}.png`, blob)
+    const height = exportedHeightCm(page, maxHeightCm).toFixed(1)
+    zip.file(`gang-sheet-dtf-pagina-${page.index + 1}-${height}cm.png`, await renderPageToBlob(page, canvasWidthCm, maxHeightCm))
   }
-  const zipBlob = await zip.generateAsync({ type: 'blob' })
-  triggerDownload(zipBlob, 'gang-sheets-dtf.zip')
+  triggerDownload(await zip.generateAsync({ type: 'blob' }), 'gang-sheets-dtf.zip')
 }
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  setTimeout(() => URL.revokeObjectURL(url), 1_000)
 }

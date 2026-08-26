@@ -9,6 +9,8 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
   const updateQuantity = useGangSheetStore((s) => s.updateQuantity)
   const updateWidthCm = useGangSheetStore((s) => s.updateWidthCm)
   const removeImage = useGangSheetStore((s) => s.removeImage)
+  const effectiveDpi = (image.contentWidthPx / image.widthCm) * 2.54
+  const qualityLabel = effectiveDpi >= 300 ? '300 DPI ou mais' : `${Math.round(effectiveDpi)} DPI · pode perder definição`
 
   return (
     <div className="flex min-w-0 gap-3 rounded-lg border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
@@ -60,6 +62,9 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
         </div>
         <p className="text-[11px] text-muted-foreground">
           Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
+        </p>
+        <p className={`text-[11px] ${effectiveDpi >= 300 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+          {qualityLabel}
         </p>
       </div>
     </div>

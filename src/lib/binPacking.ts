@@ -27,205 +27,221 @@ interface PageBucket {
   freeRects: FreeRect[]
 }
 
-/**
- * Expands each queued image into `quantity` individual units to be packed
- * onto the gang sheet independently.
- */
+type SortStrategy = 'area' | 'max-side' | 'height' | 'width'
+type FitStrategy = 'short-side' | 'area'
+
+interface Candidate {
+  pages: PackedPage[]
+  unplaced: PackingResult['unplaced']
+  name: string
+}
+
+export interface PackingResult {
+  pages: PackedPage[]
+  /** Arts that cannot physically fit on a blank page at their chosen size. */
+  unplaced: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
+  /** Human-readable diagnostic that makes packing decisions debuggable. */
+  strategy: string
+}
+
+const EPSILON = 0.0001
+const END_MARGIN_CM = 0.1
+
+/** Expands quantities into individually placeable units. */
 function expandQueue(images: GangImage[]): PackableUnit[] {
   const units: PackableUnit[] = []
-  for (const img of images) {
-    for (let i = 0; i < img.quantity; i++) {
+  for (const image of images) {
+    for (let copy = 0; copy < image.quantity; copy++) {
       units.push({
-        id: `${img.id}-${i}`,
-        sourceImageId: img.id,
-        previewUrl: img.previewUrl,
-        widthCm: img.widthCm,
-        heightCm: img.heightCm,
-        contentXPx: img.contentXPx,
-        contentYPx: img.contentYPx,
-        contentWidthPx: img.contentWidthPx,
-        contentHeightPx: img.contentHeightPx,
-        naturalWidthPx: img.naturalWidthPx,
-        naturalHeightPx: img.naturalHeightPx,
+        id: `${image.id}-${copy}`,
+        sourceImageId: image.id,
+        previewUrl: image.previewUrl,
+        widthCm: image.widthCm,
+        heightCm: image.heightCm,
+        contentXPx: image.contentXPx,
+        contentYPx: image.contentYPx,
+        contentWidthPx: image.contentWidthPx,
+        contentHeightPx: image.contentHeightPx,
+        naturalWidthPx: image.naturalWidthPx,
+        naturalHeightPx: image.naturalHeightPx,
       })
     }
   }
   return units
 }
 
-function rectContains(a: FreeRect, b: FreeRect): boolean {
-  // True if free rect `b` is fully contained within `a` (and thus redundant).
-  return b.x >= a.x && b.y >= a.y && b.x + b.width <= a.x + a.width && b.y + b.height <= a.y + a.height
+function sortUnits(units: PackableUnit[], strategy: SortStrategy): PackableUnit[] {
+  return [...units].sort((a, b) => {
+    const areaA = a.widthCm * a.heightCm
+    const areaB = b.widthCm * b.heightCm
+    const maxA = Math.max(a.widthCm, a.heightCm)
+    const maxB = Math.max(b.widthCm, b.heightCm)
+    const primary =
+      strategy === 'area'
+        ? areaB - areaA
+        : strategy === 'max-side'
+          ? maxB - maxA
+          : strategy === 'height'
+            ? b.heightCm - a.heightCm
+            : b.widthCm - a.widthCm
+    if (Math.abs(primary) > EPSILON) return primary
+    if (Math.abs(areaB - areaA) > EPSILON) return areaB - areaA
+    return a.id.localeCompare(b.id)
+  })
 }
 
-/**
- * Splits every free rectangle that overlaps `used` into the leftover
- * (non-covered) pieces, then prunes any free rectangle fully contained
- * within another. Standard MaxRects free-space maintenance.
- */
+function rectContains(outer: FreeRect, inner: FreeRect): boolean {
+  return (
+    inner.x >= outer.x - EPSILON &&
+    inner.y >= outer.y - EPSILON &&
+    inner.x + inner.width <= outer.x + outer.width + EPSILON &&
+    inner.y + inner.height <= outer.y + outer.height + EPSILON
+  )
+}
+
+/** Maintains the non-overlapping free rectangles used by MaxRects. */
 function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
   const next: FreeRect[] = []
-
-  for (const f of freeRects) {
+  for (const free of freeRects) {
     const overlaps =
-      used.x < f.x + f.width && used.x + used.width > f.x && used.y < f.y + f.height && used.y + used.height > f.y
-
+      used.x < free.x + free.width - EPSILON &&
+      used.x + used.width > free.x + EPSILON &&
+      used.y < free.y + free.height - EPSILON &&
+      used.y + used.height > free.y + EPSILON
     if (!overlaps) {
-      next.push(f)
+      next.push(free)
       continue
     }
-
-    if (used.x > f.x) {
-      next.push({ x: f.x, y: f.y, width: used.x - f.x, height: f.height })
+    if (used.x > free.x + EPSILON) next.push({ x: free.x, y: free.y, width: used.x - free.x, height: free.height })
+    if (used.x + used.width < free.x + free.width - EPSILON) {
+      next.push({ x: used.x + used.width, y: free.y, width: free.x + free.width - (used.x + used.width), height: free.height })
     }
-    if (used.x + used.width < f.x + f.width) {
-      next.push({
-        x: used.x + used.width,
-        y: f.y,
-        width: f.x + f.width - (used.x + used.width),
-        height: f.height,
-      })
-    }
-    if (used.y > f.y) {
-      next.push({ x: f.x, y: f.y, width: f.width, height: used.y - f.y })
-    }
-    if (used.y + used.height < f.y + f.height) {
-      next.push({
-        x: f.x,
-        y: used.y + used.height,
-        width: f.width,
-        height: f.y + f.height - (used.y + used.height),
-      })
+    if (used.y > free.y + EPSILON) next.push({ x: free.x, y: free.y, width: free.width, height: used.y - free.y })
+    if (used.y + used.height < free.y + free.height - EPSILON) {
+      next.push({ x: free.x, y: used.y + used.height, width: free.width, height: free.y + free.height - (used.y + used.height) })
     }
   }
 
-  // Prune degenerate and contained rectangles.
-  const cleaned = next.filter((r) => r.width > 0.001 && r.height > 0.001)
-  const pruned: FreeRect[] = []
-  for (let i = 0; i < cleaned.length; i++) {
-    let contained = false
-    for (let j = 0; j < cleaned.length; j++) {
-      if (i !== j && rectContains(cleaned[j], cleaned[i])) {
-        contained = true
-        break
-      }
-    }
-    if (!contained) pruned.push(cleaned[i])
-  }
-  return pruned
+  const cleaned = next.filter((rect) => rect.width > EPSILON && rect.height > EPSILON)
+  return cleaned.filter((rect, index) => !cleaned.some((other, otherIndex) => otherIndex !== index && rectContains(other, rect)))
+}
+
+interface Fit {
+  rect: FreeRect
+  rotated: boolean
+  primary: number
+  secondary: number
 }
 
 /**
- * Best Short Side Fit: among all free rects that fit, pick the tightest one.
- * Each item is tried in both orientations (original and rotated 90°) and the
- * tighter of the two wins, so tall art can lie on its side to fill a wide gap.
- * The chosen orientation is reported back via `rotated`; the renderer draws the
- * art at the matching angle, so the packed box always matches what's on screen.
+ * Tries original and 90° orientations in every free rectangle.  Two fit
+ * heuristics are used in separate packing passes; comparing those passes is
+ * much more reliable for mixed artwork than one fixed input order.
  */
-function findBestFit(
-  freeRects: FreeRect[],
-  width: number,
-  height: number
-): { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null {
-  let best: { rect: FreeRect; shortSide: number; longSide: number; rotated: boolean } | null = null
+function findBestFit(freeRects: FreeRect[], width: number, height: number, strategy: FitStrategy): Fit | null {
+  let best: Fit | null = null
 
-  const tryFit = (w: number, h: number, rotated: boolean) => {
+  const consider = (placedWidth: number, placedHeight: number, rotated: boolean) => {
     for (const rect of freeRects) {
-      if (rect.width < w || rect.height < h) continue
-      const leftoverW = rect.width - w
-      const leftoverH = rect.height - h
-      const shortSide = Math.min(leftoverW, leftoverH)
-      const longSide = Math.max(leftoverW, leftoverH)
-      if (!best || shortSide < best.shortSide || (shortSide === best.shortSide && longSide < best.longSide)) {
-        best = { rect, shortSide, longSide, rotated }
+      if (rect.width + EPSILON < placedWidth || rect.height + EPSILON < placedHeight) continue
+      const leftoverWidth = rect.width - placedWidth
+      const leftoverHeight = rect.height - placedHeight
+      const shortSide = Math.min(leftoverWidth, leftoverHeight)
+      const longSide = Math.max(leftoverWidth, leftoverHeight)
+      const wastedArea = rect.width * rect.height - placedWidth * placedHeight
+      const primary = strategy === 'area' ? wastedArea : shortSide
+      const secondary = strategy === 'area' ? shortSide : longSide
+      if (
+        !best ||
+        primary < best.primary - EPSILON ||
+        (Math.abs(primary - best.primary) <= EPSILON && secondary < best.secondary - EPSILON) ||
+        (Math.abs(primary - best.primary) <= EPSILON && Math.abs(secondary - best.secondary) <= EPSILON && rect.y < best.rect.y - EPSILON)
+      ) {
+        best = { rect, rotated, primary, secondary }
       }
     }
   }
 
-  tryFit(width, height, false)
-  // Only bother with the rotated orientation when it's actually different.
-  if (Math.abs(width - height) > 0.001) {
-    tryFit(height, width, true)
-  }
+  consider(width, height, false)
+  if (Math.abs(width - height) > EPSILON) consider(height, width, true)
   return best
 }
 
-/**
- * MaxRects bin packing (Best Short Side Fit heuristic):
- * - Each page tracks its free rectangular space (starting as the whole
- *   canvasWidthCm × maxHeightCm sheet).
- * - Items are sorted by area (largest first) and placed into whichever
- *   already-open page offers the tightest fit; a new page opens only when
- *   nothing fits anywhere.
- * - Placing an item splits/prunes the free rectangle list so leftover gaps
- *   next to and below it stay available for smaller items later — unlike
- *   shelf packing, nothing is wasted just because it doesn't share a row.
- * - Each item may be auto-rotated 90° when that orientation fills the space
- *   better. `widthCm`/`heightCm` on the result always stay the art's real
- *   (unrotated) size; `angle` records the orientation and `xCm`/`yCm` are the
- *   top-left of the on-sheet bounding box. The renderer reads all three, so the
- *   drawn art matches the reserved box exactly. Sizes are never changed.
- */
-export function packImages(
-  images: GangImage[],
+function buildPages(buckets: PageBucket[]): PackedPage[] {
+  return buckets.map((bucket, index) => ({
+    index,
+    items: bucket.items,
+    usedHeightCm: bucket.items.reduce((bottom, item) => {
+      const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle)
+      return Math.max(bottom, item.yCm + box.hCm)
+    }, 0),
+  }))
+}
+
+function packWithStrategy(
+  units: PackableUnit[],
   maxHeightCm: number,
   canvasWidthCm: number,
-  itemGapCm: number
-): PackedPage[] {
-  const units = expandQueue(images).sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
-
+  itemGapCm: number,
+  sortStrategy: SortStrategy,
+  fitStrategy: FitStrategy
+): Candidate {
   const buckets: PageBucket[] = []
-
-  const openNewBucket = (): PageBucket => {
+  const unplaced: PackingResult['unplaced'] = []
+  const openBucket = (): PageBucket => {
+    // Each art reserves its spacing on the right/bottom.  The extra outer gap
+    // lets one art use the sheet edge while preserving the requested gap between
+    // two neighbouring arts.
     const bucket: PageBucket = {
       items: [],
-      freeRects: [{ x: 0, y: 0, width: canvasWidthCm, height: maxHeightCm }],
+      freeRects: [{ x: 0, y: 0, width: canvasWidthCm + itemGapCm, height: maxHeightCm + itemGapCm }],
     }
     buckets.push(bucket)
     return bucket
   }
 
-  for (const unit of units) {
-    const itemWidth = unit.widthCm
-    const itemHeight = unit.heightCm
-    const occupiedWidth = itemWidth + itemGapCm
-    const occupiedHeight = itemHeight + itemGapCm
-
-    let target: { bucket: PageBucket; rect: FreeRect; rotated: boolean } | null = null
-    let bestShortSide = Infinity
-    let bestLongSide = Infinity
+  for (const unit of sortUnits(units, sortStrategy)) {
+    const reservedWidth = unit.widthCm + itemGapCm
+    const reservedHeight = unit.heightCm + itemGapCm
+    let target: { bucket: PageBucket; fit: Fit } | null = null
 
     for (const bucket of buckets) {
-      const fit = findBestFit(bucket.freeRects, occupiedWidth, occupiedHeight)
+      const fit = findBestFit(bucket.freeRects, reservedWidth, reservedHeight, fitStrategy)
       if (!fit) continue
-      if (fit.shortSide < bestShortSide || (fit.shortSide === bestShortSide && fit.longSide < bestLongSide)) {
-        target = { bucket, rect: fit.rect, rotated: fit.rotated }
-        bestShortSide = fit.shortSide
-        bestLongSide = fit.longSide
+      if (
+        !target ||
+        fit.primary < target.fit.primary - EPSILON ||
+        (Math.abs(fit.primary - target.fit.primary) <= EPSILON && fit.secondary < target.fit.secondary - EPSILON)
+      ) {
+        target = { bucket, fit }
       }
     }
 
     if (!target) {
-      const bucket = openNewBucket()
-      target = { bucket, rect: bucket.freeRects[0], rotated: false }
+      const bucket = openBucket()
+      const fit = findBestFit(bucket.freeRects, reservedWidth, reservedHeight, fitStrategy)
+      if (!fit) {
+        buckets.pop()
+        unplaced.push({ sourceImageId: unit.sourceImageId, widthCm: unit.widthCm, heightCm: unit.heightCm })
+        continue
+      }
+      target = { bucket, fit }
     }
 
-    const { bucket, rect, rotated } = target
-    // widthCm/heightCm stay the art's real size; the on-sheet box swaps sides
-    // when the item is rotated 90°.
-    const boxWidth = rotated ? itemHeight : itemWidth
-    const boxHeight = rotated ? itemWidth : itemHeight
-    const used: FreeRect = { x: rect.x, y: rect.y, width: boxWidth + itemGapCm, height: boxHeight + itemGapCm }
+    const { bucket, fit } = target
+    const angle = fit.rotated ? 90 : 0
+    const box = rotatedAabbCm(unit.widthCm, unit.heightCm, angle)
+    const used: FreeRect = { x: fit.rect.x, y: fit.rect.y, width: box.wCm + itemGapCm, height: box.hCm + itemGapCm }
 
     bucket.items.push({
       id: unit.id,
       sourceImageId: unit.sourceImageId,
       previewUrl: unit.previewUrl,
-      xCm: rect.x,
-      yCm: rect.y,
-      widthCm: itemWidth,
-      heightCm: itemHeight,
-      angle: rotated ? 90 : 0,
+      xCm: fit.rect.x,
+      yCm: fit.rect.y,
+      widthCm: unit.widthCm,
+      heightCm: unit.heightCm,
+      angle,
       contentXPx: unit.contentXPx,
       contentYPx: unit.contentYPx,
       contentWidthPx: unit.contentWidthPx,
@@ -233,19 +249,48 @@ export function packImages(
       naturalWidthPx: unit.naturalWidthPx,
       naturalHeightPx: unit.naturalHeightPx,
     })
-
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)
   }
 
-  if (buckets.length === 0) openNewBucket()
+  return { pages: buildPages(buckets), unplaced, name: `${sortStrategy}/${fitStrategy}` }
+}
 
-  return buckets.map((bucket, index) => ({
-    index,
-    items: bucket.items,
-    // Bottom edge uses the on-sheet box height, which is the art's width when rotated.
-    usedHeightCm: bucket.items.reduce(
-      (max, it) => Math.max(max, it.yCm + rotatedAabbCm(it.widthCm, it.heightCm, it.angle).hCm),
-      0
-    ),
-  }))
+function candidateScore(candidate: Candidate): [number, number, number] {
+  const totalHeight = candidate.pages.reduce((sum, page) => sum + page.usedHeightCm + END_MARGIN_CM, 0)
+  return [candidate.unplaced.length, totalHeight, candidate.pages.length]
+}
+
+function isBetter(candidate: Candidate, current: Candidate): boolean {
+  const candidateScoreValue = candidateScore(candidate)
+  const currentScoreValue = candidateScore(current)
+  for (let index = 0; index < candidateScoreValue.length; index++) {
+    if (candidateScoreValue[index] < currentScoreValue[index] - EPSILON) return true
+    if (candidateScoreValue[index] > currentScoreValue[index] + EPSILON) return false
+  }
+  return false
+}
+
+/**
+ * Packs the same queue through several independent MaxRects strategies, then
+ * chooses the one that uses the least total film length.  This gives a much
+ * better result for five or more mixed-size arts than relying on upload order.
+ */
+export function packImages(images: GangImage[], maxHeightCm: number, canvasWidthCm: number, itemGapCm: number): PackingResult {
+  const units = expandQueue(images).filter((unit) => unit.widthCm > 0 && unit.heightCm > 0)
+  if (units.length === 0) return { pages: [], unplaced: [], strategy: 'vazio' }
+
+  // Extra passes improve packing quality. Limit them on unusually huge queues
+  // so the browser remains responsive instead of locking up during O(n²) work.
+  const strategies: Array<[SortStrategy, FitStrategy]> =
+    units.length > 350
+      ? [['area', 'short-side'], ['max-side', 'area']]
+      : [['area', 'short-side'], ['max-side', 'short-side'], ['height', 'area'], ['width', 'area']]
+
+  let best = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, strategies[0][0], strategies[0][1])
+  for (const [sortStrategy, fitStrategy] of strategies.slice(1)) {
+    const candidate = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, sortStrategy, fitStrategy)
+    if (isBetter(candidate, best)) best = candidate
+  }
+
+  return { pages: best.pages, unplaced: best.unplaced, strategy: best.name }
 }

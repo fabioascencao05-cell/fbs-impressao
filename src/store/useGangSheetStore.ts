@@ -12,7 +12,7 @@ import {
 } from '@/lib/constants'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
-const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
 
 interface GangSheetState {
   images: GangImage[]
@@ -20,6 +20,8 @@ interface GangSheetState {
   canvasWidthCm: number
   itemGapCm: number
   pages: PackedPage[]
+  unplacedImages: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
+  packingStrategy: string | null
   zoom: number
   sheetBackgroundColor: string
   costPerCm2: number
@@ -46,6 +48,10 @@ function clampZoom(z: number) {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z))
 }
 
+function finiteAtLeast(value: number, minimum: number, fallback: number) {
+  return Number.isFinite(value) && value >= minimum ? value : fallback
+}
+
 // Bottom edge of an item on the sheet, honouring rotation: a 90°-rotated item's
 // on-sheet height is its (unrotated) width, so we take the AABB height.
 function itemBottomCm(it: PlacedItem) {
@@ -62,41 +68,52 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   canvasWidthCm: DEFAULT_CANVAS_WIDTH_CM,
   itemGapCm: DEFAULT_ITEM_GAP_CM,
   pages: [],
+  unplacedImages: [],
+  packingStrategy: null,
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
   costPerCm2: 0,
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
-    const skipped = files.length - accepted.length
+    let skipped = files.length - accepted.length
     const newImages: GangImage[] = []
 
-    for (const file of accepted) {
-      const box = await computeContentBox(file)
-      const aspectRatio = box.heightPx / box.widthPx
-      // Real-world size at print resolution — never altered/clamped, so the
-      // uploaded artwork keeps its exact measure regardless of sheet size.
-      // Rounded to 1 decimal so the sidebar input shows a clean value.
-      const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
-      const heightCm = widthCm * aspectRatio
-      newImages.push({
-        id: crypto.randomUUID(),
-        file,
-        previewUrl: URL.createObjectURL(file),
-        naturalWidthPx: box.naturalWidthPx,
-        naturalHeightPx: box.naturalHeightPx,
-        aspectRatio,
-        quantity: 1,
-        widthCm,
-        heightCm,
-        contentXPx: box.xPx,
-        contentYPx: box.yPx,
-        contentWidthPx: box.widthPx,
-        contentHeightPx: box.heightPx,
-      })
+    // Decode a few files at a time. This handles a large drag-and-drop batch
+    // quickly without exhausting the browser with hundreds of canvases at once.
+    for (let start = 0; start < accepted.length; start += 4) {
+      const batch = await Promise.all(
+        accepted.slice(start, start + 4).map(async (file): Promise<GangImage | null> => {
+          try {
+            const box = await computeContentBox(file)
+            const aspectRatio = box.heightPx / box.widthPx
+            const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
+            const image: GangImage = {
+              id: crypto.randomUUID(),
+              file,
+              previewUrl: URL.createObjectURL(file),
+              naturalWidthPx: box.naturalWidthPx,
+              naturalHeightPx: box.naturalHeightPx,
+              aspectRatio,
+              quantity: 1,
+              widthCm,
+              heightCm: widthCm * aspectRatio,
+              contentXPx: box.xPx,
+              contentYPx: box.yPx,
+              contentWidthPx: box.widthPx,
+              contentHeightPx: box.heightPx,
+            }
+            return image
+          } catch {
+            skipped++
+            return null
+          }
+        })
+      )
+      newImages.push(...batch.filter((image): image is GangImage => image !== null))
     }
 
-    set((state) => ({ images: [...state.images, ...newImages] }))
+    set((state) => ({ images: [...state.images, ...newImages], unplacedImages: [], packingStrategy: null }))
     return { added: accepted.length, skipped }
   },
 
@@ -111,6 +128,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
           ...page,
           items: page.items.filter((it) => it.sourceImageId !== id),
         })),
+        unplacedImages: state.unplacedImages.filter((it) => it.sourceImageId !== id),
+        packingStrategy: null,
       }
     })
   },
@@ -118,37 +137,41 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   updateQuantity: (id, quantity) => {
     set((state) => ({
       images: state.images.map((img) =>
-        img.id === id ? { ...img, quantity: Math.max(1, Math.floor(quantity) || 1) } : img
+        img.id === id ? { ...img, quantity: Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : img.quantity } : img
       ),
+      unplacedImages: [],
+      packingStrategy: null,
     }))
   },
 
   updateWidthCm: (id, widthCm) => {
     set((state) => ({
       images: state.images.map((img) =>
-        img.id === id && widthCm > 0
+        img.id === id && Number.isFinite(widthCm) && widthCm > 0
           ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
           : img
       ),
+      unplacedImages: [],
+      packingStrategy: null,
     }))
   },
 
   setMaxHeightCm: (heightCm) => {
-    set({ maxHeightCm: Math.max(1, heightCm) })
+    set((state) => ({ maxHeightCm: finiteAtLeast(heightCm, 1, state.maxHeightCm), unplacedImages: [], packingStrategy: null }))
   },
 
   setCanvasWidthCm: (widthCm) => {
-    set({ canvasWidthCm: Math.max(1, widthCm) })
+    set((state) => ({ canvasWidthCm: finiteAtLeast(widthCm, 1, state.canvasWidthCm), unplacedImages: [], packingStrategy: null }))
   },
 
   setItemGapCm: (gapCm) => {
-    set({ itemGapCm: Math.max(0, gapCm) })
+    set((state) => ({ itemGapCm: finiteAtLeast(gapCm, 0, state.itemGapCm), unplacedImages: [], packingStrategy: null }))
   },
 
   generateLayout: () => {
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const pages = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
-    set({ pages })
+    const result = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
+    set({ pages: result.pages, unplacedImages: result.unplaced, packingStrategy: result.strategy })
   },
 
   updatePlacedItem: (pageIndex, itemId, patch) => {
@@ -204,12 +227,12 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set({ costPerCm2: Math.max(0, cost) }),
+  setCostPerCm2: (cost) => set((state) => ({ costPerCm2: finiteAtLeast(cost, 0, state.costPerCm2) })),
 
   reset: () => {
     set((state) => {
       state.images.forEach((img) => URL.revokeObjectURL(img.previewUrl))
-      return { images: [], pages: [] }
+      return { images: [], pages: [], unplacedImages: [], packingStrategy: null }
     })
   },
 }))

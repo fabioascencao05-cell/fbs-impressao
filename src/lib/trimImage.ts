@@ -7,9 +7,12 @@ export interface ContentBox {
   naturalHeightPx: number
 }
 
-// Scanning at full resolution is wasteful for large prints; a small
-// downsampled copy is enough to locate the bounding box of visible pixels.
+// A small downsampled copy is enough to locate the bounding box of visible
+// pixels. We deliberately add a safety margin when mapping it back to the
+// original image: a downsampled alpha scan must never cut a thin line, glow or
+// anti-aliased edge from the original artwork.
 const SCAN_MAX_SIDE = 512
+const SCAN_SAFETY_PX = 2
 
 /**
  * Finds the tight bounding box of non-transparent pixels in a PNG, so the
@@ -20,6 +23,7 @@ const SCAN_MAX_SIDE = 512
 export function computeContentBox(file: File): Promise<ContentBox> {
   return new Promise((resolve, reject) => {
     const img = new Image()
+    const sourceUrl = URL.createObjectURL(file)
     img.onload = () => {
       const naturalWidthPx = img.naturalWidth
       const naturalHeightPx = img.naturalHeight
@@ -34,6 +38,7 @@ export function computeContentBox(file: File): Promise<ContentBox> {
       const ctx = canvas.getContext('2d', { willReadFrequently: true })
       if (!ctx) {
         resolve(fullBox(naturalWidthPx, naturalHeightPx))
+        URL.revokeObjectURL(sourceUrl)
         return
       }
       ctx.drawImage(img, 0, 0, scanWidth, scanHeight)
@@ -43,6 +48,7 @@ export function computeContentBox(file: File): Promise<ContentBox> {
         data = ctx.getImageData(0, 0, scanWidth, scanHeight).data
       } catch {
         resolve(fullBox(naturalWidthPx, naturalHeightPx))
+        URL.revokeObjectURL(sourceUrl)
         return
       }
 
@@ -65,21 +71,33 @@ export function computeContentBox(file: File): Promise<ContentBox> {
 
       if (maxX < minX || maxY < minY) {
         resolve(fullBox(naturalWidthPx, naturalHeightPx))
+        URL.revokeObjectURL(sourceUrl)
         return
       }
 
       const invScale = 1 / scale
+      const safetyPx = Math.ceil(SCAN_SAFETY_PX * invScale)
       resolve({
-        xPx: Math.max(0, Math.floor(minX * invScale)),
-        yPx: Math.max(0, Math.floor(minY * invScale)),
-        widthPx: Math.min(naturalWidthPx, Math.ceil((maxX - minX + 1) * invScale)),
-        heightPx: Math.min(naturalHeightPx, Math.ceil((maxY - minY + 1) * invScale)),
+        xPx: Math.max(0, Math.floor(minX * invScale) - safetyPx),
+        yPx: Math.max(0, Math.floor(minY * invScale) - safetyPx),
+        widthPx: Math.min(
+          naturalWidthPx - Math.max(0, Math.floor(minX * invScale) - safetyPx),
+          Math.ceil((maxX - minX + 1) * invScale) + safetyPx * 2
+        ),
+        heightPx: Math.min(
+          naturalHeightPx - Math.max(0, Math.floor(minY * invScale) - safetyPx),
+          Math.ceil((maxY - minY + 1) * invScale) + safetyPx * 2
+        ),
         naturalWidthPx,
         naturalHeightPx,
       })
+      URL.revokeObjectURL(sourceUrl)
     }
-    img.onerror = reject
-    img.src = URL.createObjectURL(file)
+    img.onerror = () => {
+      URL.revokeObjectURL(sourceUrl)
+      reject(new Error(`Não foi possível ler ${file.name}.`))
+    }
+    img.src = sourceUrl
   })
 }
 

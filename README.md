@@ -14,12 +14,15 @@ MVP de um SaaS para montagem automática de "gang sheets" para impressão DTF.
 ## Como funciona
 
 - A largura da folha é fixa em **57cm**. A altura máxima é definida pelo usuário.
-- Cada imagem enviada (.PNG) entra numa fila com quantidade e largura (cm) editáveis; a altura é calculada automaticamente mantendo a proporção original.
-- "Gerar Layout" roda um algoritmo de bin packing (shelf / First-Fit Decreasing) que:
+- Cada imagem enviada (PNG, JPG, WebP ou SVG) entra numa fila com quantidade e largura (cm) editáveis; a altura é calculada automaticamente mantendo a proporção original.
+- "Gerar Layout" roda um algoritmo MaxRects (Best Short Side Fit) que:
   - Expande cada imagem pela quantidade informada.
-  - Posiciona os itens lado a lado, linha por linha, otimizando o uso do espaço.
+  - Testa posições e rotação de 90° para aproveitar os espaços vazios sem alterar o tamanho da arte.
+  - Mantém o espaçamento de corte entre artes, mas permite que uma arte isolada encoste na borda útil da folha.
   - Cria automaticamente uma nova página quando a altura máxima é excedida (auto-paginação).
-- "Download DTF" renderiza cada página num canvas offscreen a **300 DPI** (1cm = 118px), com fundo transparente, e baixa um PNG (ou um `.zip` quando há múltiplas páginas).
+- "Download DTF" renderiza cada página a **300 DPI reais**, com fundo transparente e metadado de 300 DPI. O PNG usa somente a altura ocupada (mais 1 mm de margem final), evitando filme vazio; múltiplas páginas são entregues em `.zip`.
+- A fila mostra o DPI efetivo de cada arte no tamanho escolhido. Se você aumentar uma arte além da resolução original, o sistema avisa — ele não inventa qualidade nem reduz o arquivo silenciosamente.
+- O Studio permite remover fundo em lote, ampliar imagens para preparo de impressão e vetorizar logos. Ao enviar uma arte vetorizada para a folha, o SVG é preservado até a exportação final.
 
 ## Rodando localmente
 

@@ -15,7 +15,7 @@ export interface SelectionInfo {
 interface CanvasPageProps {
   page: PackedPage
   canvasWidthCm: number
-  maxHeightCm: number
+  sheetHeightCm: number
   pxPerCm: number
   onSelectionChange: (sel: SelectionInfo | null) => void
 }
@@ -40,7 +40,7 @@ const BACKGROUND_PRESETS: Record<string, string> = {
 export default function CanvasPage({
   page,
   canvasWidthCm,
-  maxHeightCm,
+  sheetHeightCm,
   pxPerCm,
   onSelectionChange,
 }: CanvasPageProps) {
@@ -51,9 +51,9 @@ export default function CanvasPage({
   const [hud, setHud] = useState<HudInfo | null>(null)
 
   const widthPx = canvasWidthCm * pxPerCm
-  const heightPx = maxHeightCm * pxPerCm
+  const heightPx = sheetHeightCm * pxPerCm
 
-  // (Re)create the Fabric canvas whenever the pixel dimensions change (zoom / max height).
+  // (Re)create the Fabric canvas whenever the pixel dimensions change.
   useEffect(() => {
     if (!canvasElRef.current) return
 

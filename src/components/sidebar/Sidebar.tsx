@@ -1,4 +1,4 @@
-import { LayoutGrid, Download, X, Layers, ImageOff, Trash2 } from 'lucide-react'
+import { LayoutGrid, Download, X, Layers, ImageOff, Trash2, Gauge, Ruler, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -10,7 +10,8 @@ import ImageQueueItem from './ImageQueueItem'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { downloadGangSheets } from '@/lib/exportCanvas'
 import { toast } from '@/hooks/use-toast'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { EXPORT_END_MARGIN_CM } from '@/lib/constants'
 
 interface SidebarProps {
   onClose?: () => void
@@ -28,14 +29,39 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
+  const unplacedImages = useGangSheetStore((s) => s.unplacedImages)
+  const packingStrategy = useGangSheetStore((s) => s.packingStrategy)
   const reset = useGangSheetStore((s) => s.reset)
   const [isExporting, setIsExporting] = useState(false)
 
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
+  const layoutStats = useMemo(() => {
+    const visible = pages.filter((page) => page.items.length > 0)
+    const artArea = visible.flatMap((page) => page.items).reduce((sum, item) => sum + item.widthCm * item.heightCm, 0)
+    const filmHeight = visible.reduce((sum, page) => sum + Math.min(maxHeightCm, page.usedHeightCm + EXPORT_END_MARGIN_CM), 0)
+    const filmArea = canvasWidthCm * filmHeight
+    return {
+      pages: visible.length,
+      filmHeight,
+      efficiency: filmArea > 0 ? Math.min(100, (artArea / filmArea) * 100) : 0,
+    }
+  }, [canvasWidthCm, maxHeightCm, pages])
 
   const handleGenerateLayout = () => {
     generateLayout()
+    const skipped = useGangSheetStore.getState().unplacedImages
+    if (skipped.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: `${skipped.length} arte(s) não couberam`,
+        description: 'Reduza a largura da arte, aumente a folha ou permita uma altura máxima maior.',
+      })
+    } else {
+      const current = useGangSheetStore.getState()
+      const count = current.pages.filter((page) => page.items.length > 0).length
+      toast({ title: 'Folha otimizada', description: `${count} página(s) gerada(s) com encaixe inteligente.` })
+    }
     onClose?.()
   }
 
@@ -45,6 +71,10 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   const handleDownload = async () => {
+    if (unplacedImages.length > 0) {
+      toast({ variant: 'destructive', title: 'Ainda há artes sem posição', description: 'Ajuste as medidas ou a altura máxima e gere o layout de novo antes de baixar.' })
+      return
+    }
     setIsExporting(true)
     try {
       await downloadGangSheets(pages, canvasWidthCm, maxHeightCm)
@@ -90,8 +120,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
         <ImageUploadZone />
 
         <div className="space-y-1.5 rounded-lg border bg-muted/40 p-2.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Tamanho da Folha
+          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <Ruler className="h-3.5 w-3.5" /> Tamanho da Folha
           </p>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-0.5">
@@ -105,7 +135,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
               />
             </div>
             <div className="space-y-0.5">
-              <Label htmlFor="max-height">Altura Máxima (cm)</Label>
+              <Label htmlFor="max-height">Limite/página (cm)</Label>
               <Input
                 id="max-height"
                 type="number"
@@ -144,8 +174,26 @@ export default function Sidebar({ onClose }: SidebarProps) {
               />
             </div>
           </div>
+          <p className="text-[10px] leading-relaxed text-muted-foreground">A exportação usa só a altura ocupada. Este limite apenas divide folhas muito longas em páginas menores.</p>
         </div>
       </div>
+
+      {hasLayout && (
+        <div className="mx-4 rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary"><Gauge className="h-3.5 w-3.5" /> Aproveitamento</span>
+            <span className="text-sm font-bold tabular-nums text-primary">{Math.round(layoutStats.efficiency)}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-primary/15">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${layoutStats.efficiency}%` }} />
+          </div>
+          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
+            <span>{layoutStats.pages} página(s)</span>
+            <span>{layoutStats.filmHeight.toFixed(1)} cm de filme</span>
+          </div>
+          {packingStrategy && <p className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground"><Sparkles className="h-3 w-3" /> Encaixe: {packingStrategy}</p>}
+        </div>
+      )}
 
       <Separator />
 
@@ -191,6 +239,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
           </p>
         )}
+        {unplacedImages.length > 0 && (
+          <p className="rounded-md bg-destructive/10 px-2 py-1 text-center text-[11px] font-medium text-destructive">
+            {unplacedImages.length} cópia(s) não couberam na folha atual.
+          </p>
+        )}
         <Button
           className="glow-primary w-full"
           disabled={images.length === 0}
@@ -202,7 +255,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
         <Button
           className="w-full"
           variant="secondary"
-          disabled={!hasLayout || isExporting}
+          disabled={!hasLayout || isExporting || unplacedImages.length > 0}
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />

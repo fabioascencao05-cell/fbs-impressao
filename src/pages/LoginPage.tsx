@@ -3,7 +3,7 @@ import { ThemeSupa } from '@supabase/auth-ui-shared'
 import { Navigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/hooks/useAuth'
-import { useTheme } from '@/components/theme-provider'
+import { useTheme } from '@/components/use-theme'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Layers } from 'lucide-react'
 
@@ -26,7 +26,7 @@ export default function LoginPage() {
           <div className="glow-primary flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Layers className="h-6 w-6" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">DTF Gang Sheet Builder</h1>
+          <h1 className="text-2xl font-bold tracking-tight">FBS Impressão</h1>
           <p className="text-sm text-muted-foreground">
             Entre na sua conta para montar suas folhas de impressão.
           </p>
@@ -38,8 +38,8 @@ export default function LoginPage() {
             appearance={{
               theme: ThemeSupa,
               variables: {
-                default: { colors: { brand: 'hsl(199 89% 46%)', brandAccent: 'hsl(199 89% 40%)' } },
-                dark: { colors: { brand: 'hsl(189 94% 55%)', brandAccent: 'hsl(189 94% 48%)' } },
+                default: { colors: { brand: 'hsl(43 96% 42%)', brandAccent: 'hsl(38 92% 36%)' } },
+                dark: { colors: { brand: 'hsl(43 96% 58%)', brandAccent: 'hsl(43 96% 50%)' } },
               },
             }}
             theme={theme}
@@ -71,7 +71,7 @@ export default function LoginPage() {
           />
         </div>
         <p className="text-center text-xs text-muted-foreground">
-          Monte folhas gang sheet DTF com empacotamento automático.
+          Monte folhas DTF com melhor aproveitamento de filme.
         </p>
       </div>
     </div>

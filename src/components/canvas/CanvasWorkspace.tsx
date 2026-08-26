@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Layers, Trash2 } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
-import { DISPLAY_PX_PER_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
+import { DISPLAY_PX_PER_CM, EXPORT_END_MARGIN_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import Ruler from './Ruler'
@@ -203,11 +203,12 @@ export default function CanvasWorkspace() {
             className="mx-auto flex w-fit min-w-full flex-col items-center gap-10 p-8 md:px-16"
           >
             {visiblePages.map((page) => {
+              const sheetHeightCm = Math.min(maxHeightCm, Math.max(1, page.usedHeightCm + EXPORT_END_MARGIN_CM))
               const eff = sheetEfficiency(page, canvasWidthCm)
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
               // DTF é cobrado pelo filme consumido (largura da folha × altura
               // usada), não só pela área das artes — os espaços também gastam filme.
-              const filmAreaCm2 = canvasWidthCm * page.usedHeightCm
+              const filmAreaCm2 = canvasWidthCm * sheetHeightCm
               const pageCost = costPerCm2 > 0 ? filmAreaCm2 * costPerCm2 : 0
               return (
                 <div key={page.index} className="flex flex-col">
@@ -218,7 +219,7 @@ export default function CanvasWorkspace() {
                     </span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-muted-foreground">
-                        {canvasWidthCm}cm × {maxHeightCm}cm · usado{' '}
+                        {canvasWidthCm}cm × {sheetHeightCm.toFixed(1)}cm · usado{' '}
                         {page.usedHeightCm.toFixed(1)}cm
                       </span>
                       <Badge variant={effVariant} title="Aproveitamento da área usada">
@@ -245,7 +246,7 @@ export default function CanvasWorkspace() {
                     <CanvasPage
                       page={page}
                       canvasWidthCm={canvasWidthCm}
-                      maxHeightCm={maxHeightCm}
+                      sheetHeightCm={sheetHeightCm}
                       pxPerCm={pxPerCm}
                       onSelectionChange={setSelection}
                     />

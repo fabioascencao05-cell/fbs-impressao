@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Upload,
@@ -12,19 +12,23 @@ import {
   Eye,
   X,
   ImagePlus,
+  CheckCircle2,
+  Layers3,
+  WandSparkles,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
-import { removeBackground } from '@/lib/imageTools/removeBackground'
+import { removeBackground, type BackgroundQuality } from '@/lib/imageTools/removeBackground'
 import { enhanceImage } from '@/lib/imageTools/enhanceImage'
 import { vectorizeToSvg, svgToPngBlob, type VectorizePreset } from '@/lib/imageTools/vectorize'
 import { downloadBlob, downloadText, withExtension } from '@/lib/imageTools/imageUtils'
+import { EXPORT_PX_PER_CM } from '@/lib/constants'
 import type { StudioAsset } from './studioTypes'
 
-const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/webp'])
+const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
 
 // Checkerboard so transparency (removed background) is obvious in the preview.
 const CHECKER =
@@ -46,6 +50,19 @@ function loadDims(blob: Blob): Promise<{ width: number; height: number }> {
   })
 }
 
+function yieldToPaint() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+function fileFromAsset(asset: StudioAsset): File {
+  if (asset.svg) {
+    return new File([asset.svg], withExtension(asset.name, 'svg'), { type: 'image/svg+xml' })
+  }
+  const type = asset.resultBlob.type || 'image/png'
+  const extension = type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'
+  return new File([asset.resultBlob], withExtension(asset.name, extension), { type })
+}
+
 export default function StudioWorkspace() {
   const navigate = useNavigate()
   const addImages = useGangSheetStore((s) => s.addImages)
@@ -54,11 +71,15 @@ export default function StudioWorkspace() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [enhanceScale, setEnhanceScale] = useState(2)
   const [vectorPreset, setVectorPreset] = useState<VectorizePreset>('logo')
+  const [backgroundQuality, setBackgroundQuality] = useState<BackgroundQuality>('quality')
   const [showOriginal, setShowOriginal] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [batchBusy, setBatchBusy] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const selected = assets.find((a) => a.id === selectedId) ?? null
+  const busy = selected?.busy ?? null
+  const anyBusy = Boolean(batchBusy) || assets.some((asset) => asset.busy)
 
   // Revoke every object URL on unmount to avoid leaks.
   const assetsRef = useRef<StudioAsset[]>([])
@@ -77,11 +98,10 @@ export default function StudioWorkspace() {
   const addFiles = useCallback(async (files: File[]) => {
     const accepted = files.filter((f) => ACCEPTED.has(f.type))
     const skipped = files.length - accepted.length
-    const created: StudioAsset[] = []
-    for (const file of accepted) {
+    const created = await Promise.all(accepted.map(async (file) => {
       const url = URL.createObjectURL(file)
       const { width, height } = await loadDims(file)
-      created.push({
+      return {
         id: crypto.randomUUID(),
         name: file.name,
         originalUrl: url,
@@ -92,14 +112,16 @@ export default function StudioWorkspace() {
         height,
         busy: null,
         progress: null,
+      } satisfies StudioAsset
+    }))
+    if (created.length) {
+      startTransition(() => {
+        setAssets((prev) => [...prev, ...created])
+        setSelectedId((cur) => cur ?? created[0].id)
       })
     }
-    if (created.length) {
-      setAssets((prev) => [...prev, ...created])
-      setSelectedId((cur) => cur ?? created[0].id)
-    }
     if (skipped > 0) {
-      toast({ variant: 'destructive', title: 'Alguns arquivos foram ignorados', description: `${skipped} arquivo(s) não são PNG/JPG/WebP.` })
+      toast({ variant: 'destructive', title: 'Alguns arquivos foram ignorados', description: `${skipped} arquivo(s) não são PNG, JPG, WebP ou SVG.` })
     }
   }, [])
 
@@ -133,27 +155,50 @@ export default function StudioWorkspace() {
   )
 
   const runRemoveBg = useCallback(
-    async (asset: StudioAsset) => {
-      patchAsset(asset.id, { busy: 'Removendo o fundo…', progress: null })
+    async (asset: StudioAsset, silent = false): Promise<boolean> => {
+      patchAsset(asset.id, { busy: 'Preparando remoção de fundo…', progress: null })
       try {
-        const out = await removeBackground(asset.resultBlob, (p) =>
-          patchAsset(asset.id, { busy: p.stage, progress: p.ratio ?? null })
-        )
+        await yieldToPaint()
+        const out = await removeBackground(asset.resultBlob, {
+          quality: backgroundQuality,
+          onProgress: (p) => patchAsset(asset.id, { busy: p.stage, progress: p.ratio ?? null }),
+        })
         await setResult(asset.id, out, { svg: null })
-        toast({ title: 'Fundo removido', description: 'Fundo transparente pronto para download ou para a folha.' })
+        if (!silent) toast({ title: 'Fundo removido', description: 'Fundo transparente pronto para download ou para a folha.' })
+        return true
       } catch (err) {
-        toast({ variant: 'destructive', title: 'Falha ao remover o fundo', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
+        if (!silent) toast({ variant: 'destructive', title: 'Falha ao remover o fundo', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
+        return false
       } finally {
         patchAsset(asset.id, { busy: null, progress: null })
       }
     },
-    [patchAsset, setResult]
+    [backgroundQuality, patchAsset, setResult]
   )
+
+  const runAllRemoveBg = useCallback(async () => {
+    if (assets.length === 0 || anyBusy) return
+    setBatchBusy('Removendo fundos em lote…')
+    let completed = 0
+    let failed = 0
+    for (const asset of assets) {
+      const success = await runRemoveBg(asset, true)
+      if (success) completed++
+      else failed++
+    }
+    setBatchBusy(null)
+    toast({
+      variant: failed ? 'destructive' : 'default',
+      title: failed ? 'Lote concluído com pendências' : 'Fundos removidos',
+      description: failed ? `${completed} concluída(s) e ${failed} com falha. Selecione a arte para tentar de novo.` : `${completed} arte(s) prontas com fundo transparente.`,
+    })
+  }, [anyBusy, assets, runRemoveBg])
 
   const runEnhance = useCallback(
     async (asset: StudioAsset) => {
       patchAsset(asset.id, { busy: `Melhorando (${enhanceScale}×) e gravando 300 DPI…`, progress: null })
       try {
+        await yieldToPaint()
         const out = await enhanceImage(asset.resultBlob, { scale: enhanceScale })
         await setResult(asset.id, out, { svg: null })
         toast({ title: 'Imagem melhorada', description: `Ampliada ${enhanceScale}× com 300 DPI.` })
@@ -170,12 +215,13 @@ export default function StudioWorkspace() {
     async (asset: StudioAsset) => {
       patchAsset(asset.id, { busy: 'Vetorizando…', progress: null })
       try {
+        await yieldToPaint()
         const svg = await vectorizeToSvg(asset.resultBlob, vectorPreset)
-        // Rasterize the vector to a crisp 300 DPI PNG so the preview/sheet use it,
-        // while the SVG stays available for CorelDRAW.
-        const png = await svgToPngBlob(svg, Math.max(2000, asset.width))
+        // Rasterize only for a fast in-app preview. The original SVG is kept and
+        // sent to the sheet builder, where it stays crisp at any print size.
+        const png = await svgToPngBlob(svg, Math.max(1600, Math.min(4000, asset.width * 2)))
         await setResult(asset.id, png, { svg })
-        toast({ title: 'Arte vetorizada', description: 'Baixe o SVG para o Corel ou use na folha (PNG 300 DPI).' })
+        toast({ title: 'Arte vetorizada', description: 'O SVG ficou pronto para Corel e para usar na folha sem perder definição.' })
       } catch (err) {
         toast({ variant: 'destructive', title: 'Falha ao vetorizar', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
       } finally {
@@ -200,9 +246,10 @@ export default function StudioWorkspace() {
 
   const sendToSheet = useCallback(
     async (list: StudioAsset[]) => {
-      const files = list.map((a) => new File([a.resultBlob], withExtension(a.name, 'png'), { type: 'image/png' }))
+      const files = list.map(fileFromAsset)
       const { added } = await addImages(files)
-      toast({ title: 'Enviado para a folha', description: `${added} arte(s) na fila do montador.` })
+      const vectors = list.filter((asset) => asset.svg).length
+      toast({ title: 'Enviado para a folha', description: `${added} arte(s) na fila do montador.${vectors ? ` ${vectors} em vetor, sem perder definição.` : ''}` })
       navigate('/montar')
     },
     [addImages, navigate]
@@ -214,8 +261,7 @@ export default function StudioWorkspace() {
     if (e.dataTransfer.files.length) addFiles(Array.from(e.dataTransfer.files))
   }
 
-  const busy = selected?.busy ?? null
-  const anyBusy = assets.some((a) => a.busy)
+  const maxPrintWidthCm = selected ? selected.width / EXPORT_PX_PER_CM : 0
 
   return (
     <div className="flex h-full flex-col overflow-hidden md:flex-row">
@@ -247,12 +293,12 @@ export default function StudioWorkspace() {
               <Upload className="h-5 w-5" />
             </div>
             <span className="text-sm font-medium">Arraste imagens aqui</span>
-            <span className="text-[11px] text-muted-foreground">PNG, JPG ou WebP · ou clique para selecionar</span>
+            <span className="text-[11px] text-muted-foreground">PNG, JPG, WebP ou SVG · ou clique para selecionar</span>
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
             multiple
             className="hidden"
             onChange={(e) => { if (e.target.files) addFiles(Array.from(e.target.files)); e.target.value = '' }}
@@ -272,46 +318,54 @@ export default function StudioWorkspace() {
             </p>
           ) : (
             assets.map((a) => (
-              <button
+              <div
                 key={a.id}
-                type="button"
-                onClick={() => setSelectedId(a.id)}
                 className={cn(
                   'group flex w-full items-center gap-3 rounded-lg border p-2 text-left transition-colors',
                   a.id === selectedId ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                 )}
               >
-                <div
-                  className="h-10 w-10 shrink-0 rounded-md bg-cover bg-center"
-                  style={{ backgroundImage: `url(${a.resultUrl}), ${CHECKER}`, backgroundSize: 'contain, 10px 10px', backgroundRepeat: 'no-repeat, repeat', backgroundPosition: 'center' }}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-medium">{a.name}</p>
-                  <p className="truncate text-[10px] text-muted-foreground">
-                    {a.busy ? a.busy : `${a.width}×${a.height}px${a.svg ? ' · SVG' : ''}`}
-                  </p>
-                </div>
+                <button type="button" onClick={() => setSelectedId(a.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                  <div
+                    className="h-10 w-10 shrink-0 rounded-md bg-cover bg-center"
+                    style={{ backgroundImage: `url(${a.resultUrl}), ${CHECKER}`, backgroundSize: 'contain, 10px 10px', backgroundRepeat: 'no-repeat, repeat', backgroundPosition: 'center' }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium">{a.name}</p>
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      {a.busy ? a.busy : `${a.width}×${a.height}px${a.svg ? ' · Vetor pronto' : ''}`}
+                    </p>
+                  </div>
+                </button>
                 {a.busy ? (
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
                 ) : (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); removeAsset(a.id) }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); removeAsset(a.id) } }}
-                    className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                  <button
+                    type="button"
+                    onClick={() => removeAsset(a.id)}
+                    className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus:opacity-100 group-hover:opacity-100"
                     title="Remover"
                   >
                     <X className="h-3.5 w-3.5" />
-                  </span>
+                  </button>
                 )}
-              </button>
+              </div>
             ))
           )}
         </div>
 
         {assets.length > 0 && (
-          <div className="border-t p-4">
+          <div className="space-y-2 border-t p-4">
+            {batchBusy && (
+              <div className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {batchBusy}
+              </div>
+            )}
+            <Button variant="outline" className="w-full" disabled={anyBusy} onClick={runAllRemoveBg}>
+              <Layers3 className="h-4 w-4" />
+              Tirar fundo de todas
+            </Button>
             <Button className="glow-primary w-full" disabled={anyBusy} onClick={() => sendToSheet(assets)}>
               <SendHorizonal className="h-4 w-4" />
               Enviar todas pra folha
@@ -335,13 +389,19 @@ export default function StudioWorkspace() {
             </div>
           </div>
         ) : (
-          <div className="grid flex-1 gap-4 p-4 lg:grid-cols-[1fr_320px]">
+          <div className="grid flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
             {/* Preview */}
-            <section className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border bg-card/40">
-              <div className="flex items-center justify-between border-b px-4 py-2">
-                <span className="truncate text-sm font-medium">{selected.name}</span>
+            <section className="flex min-h-[320px] flex-col overflow-hidden rounded-2xl border bg-card/70 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
+                <div className="min-w-0">
+                  <span className="block truncate text-sm font-semibold">{selected.name}</span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Até {maxPrintWidthCm.toFixed(1)} cm de largura a 300 DPI
+                  </span>
+                </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">{selected.width}×{selected.height}px</Badge>
+                  {selected.svg && <Badge variant="success"><CheckCircle2 className="mr-1 h-3 w-3" />Vetor</Badge>}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -384,26 +444,44 @@ export default function StudioWorkspace() {
             {/* Tools */}
             <section className="flex flex-col gap-3">
               {/* Remover fundo */}
-              <div className="rounded-xl border bg-card/40 p-3">
+              <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <Scissors className="h-4 w-4 text-primary" /> Remover fundo
                 </div>
-                <p className="mb-2 text-[11px] text-muted-foreground">IA local, sem custo. Baixa o modelo só na 1ª vez.</p>
-                <Button className="w-full" variant="secondary" disabled={!!busy} onClick={() => runRemoveBg(selected)}>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Processa no navegador. O modelo é baixado uma vez e depois fica em cache.</p>
+                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-muted/50 p-1">
+                  {(['quality', 'fast'] as BackgroundQuality[]).map((quality) => (
+                    <button
+                      key={quality}
+                      type="button"
+                      disabled={anyBusy}
+                      onClick={() => setBackgroundQuality(quality)}
+                      className={cn(
+                        'rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        backgroundQuality === quality ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {quality === 'quality' ? 'Melhor recorte' : 'Mais rápido'}
+                    </button>
+                  ))}
+                </div>
+                <Button className="w-full" variant="secondary" disabled={anyBusy} onClick={() => runRemoveBg(selected)}>
                   Tirar o fundo
                 </Button>
               </div>
 
               {/* Melhorar / 300 DPI */}
-              <div className="rounded-xl border bg-card/40 p-3">
+              <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                  <Sparkles className="h-4 w-4 text-primary" /> Melhorar · 300 DPI
+                  <WandSparkles className="h-4 w-4 text-primary" /> Preparar para impressão
                 </div>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Amplia com nitidez sem inventar detalhes. O arquivo sai identificado como 300 DPI.</p>
                 <div className="mb-2 flex gap-1">
                   {[2, 4].map((s) => (
                     <button
                       key={s}
                       type="button"
+                      disabled={anyBusy}
                       onClick={() => setEnhanceScale(s)}
                       className={cn(
                         'flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors',
@@ -414,21 +492,23 @@ export default function StudioWorkspace() {
                     </button>
                   ))}
                 </div>
-                <Button className="w-full" variant="secondary" disabled={!!busy} onClick={() => runEnhance(selected)}>
+                <Button className="w-full" variant="secondary" disabled={anyBusy} onClick={() => runEnhance(selected)}>
                   Melhorar qualidade
                 </Button>
               </div>
 
               {/* Vetorizar */}
-              <div className="rounded-xl border bg-card/40 p-3">
+              <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <PenTool className="h-4 w-4 text-primary" /> Vetorizar
                 </div>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Ideal para logos e traços. Ao enviar para a folha, o SVG mantém a definição em qualquer medida.</p>
                 <div className="mb-2 grid grid-cols-3 gap-1">
                   {(['logo', 'detailed', 'mono'] as VectorizePreset[]).map((p) => (
                     <button
                       key={p}
                       type="button"
+                      disabled={anyBusy}
                       onClick={() => setVectorPreset(p)}
                       className={cn(
                         'rounded-md border px-1 py-1 text-[11px] font-medium capitalize transition-colors',
@@ -439,22 +519,22 @@ export default function StudioWorkspace() {
                     </button>
                   ))}
                 </div>
-                <Button className="w-full" variant="secondary" disabled={!!busy} onClick={() => runVectorize(selected)}>
+                <Button className="w-full" variant="secondary" disabled={anyBusy} onClick={() => runVectorize(selected)}>
                   Gerar vetor (SVG)
                 </Button>
               </div>
 
               {/* Export / use */}
-              <div className="mt-auto space-y-2 rounded-xl border bg-card/40 p-3">
+              <div className="mt-auto space-y-2 rounded-xl border bg-card/70 p-3 shadow-sm">
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" disabled={!!busy} onClick={() => downloadBlob(selected.resultBlob, withExtension(selected.name, 'png'))}>
+                  <Button variant="outline" size="sm" disabled={anyBusy} onClick={() => downloadBlob(selected.resultBlob, withExtension(selected.name, 'png'))}>
                     <Download className="h-4 w-4" /> PNG
                   </Button>
-                  <Button variant="outline" size="sm" disabled={!!busy || !selected.svg} onClick={() => selected.svg && downloadText(selected.svg, withExtension(selected.name, 'svg'))} title={selected.svg ? 'Baixar SVG para o Corel' : 'Vetorize primeiro para habilitar o SVG'}>
+                  <Button variant="outline" size="sm" disabled={anyBusy || !selected.svg} onClick={() => selected.svg && downloadText(selected.svg, withExtension(selected.name, 'svg'))} title={selected.svg ? 'Baixar SVG para o Corel' : 'Vetorize primeiro para habilitar o SVG'}>
                     <FileCode2 className="h-4 w-4" /> SVG
                   </Button>
                 </div>
-                <Button className="glow-primary w-full" disabled={!!busy} onClick={() => sendToSheet([selected])}>
+                <Button className="glow-primary w-full" disabled={anyBusy} onClick={() => sendToSheet([selected])}>
                   <SendHorizonal className="h-4 w-4" /> Usar na folha
                 </Button>
               </div>

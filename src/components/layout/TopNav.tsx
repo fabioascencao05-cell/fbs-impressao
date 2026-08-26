@@ -17,12 +17,12 @@ export default function TopNav() {
     <header className="glass-panel relative z-30 flex h-14 shrink-0 items-center gap-3 border-b px-3 sm:px-4">
       {/* Brand */}
       <div className="flex items-center gap-2.5">
-        <div className="glow-primary flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent text-primary-foreground">
+        <div className="glow-primary flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-amber-300 text-primary-foreground">
           <Sparkles className="h-4 w-4" />
         </div>
         <div className="hidden leading-tight sm:block">
           <p className="text-sm font-bold tracking-tight">FBS Impressão</p>
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Studio DTF</p>
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Produção DTF</p>
         </div>
       </div>
 

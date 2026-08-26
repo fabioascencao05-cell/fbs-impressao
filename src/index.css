@@ -10,21 +10,21 @@
     --card-foreground: 222 47% 8%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 8%;
-    --primary: 199 89% 46%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 43 96% 48%;
+    --primary-foreground: 222 47% 8%;
     --secondary: 210 30% 94%;
     --secondary-foreground: 222 47% 12%;
     --muted: 210 30% 94%;
     --muted-foreground: 215 16% 42%;
-    --accent: 199 89% 94%;
-    --accent-foreground: 199 89% 24%;
+    --accent: 43 95% 93%;
+    --accent-foreground: 35 88% 25%;
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
     --border: 214 20% 88%;
     --input: 214 20% 88%;
-    --ring: 199 89% 46%;
+    --ring: 43 96% 48%;
     --radius: 0.6rem;
-    --grid-line: 222 20% 20% / 0.07;
+    --grid-line: 222 20% 20% / 0.08;
   }
 
   .dark {
@@ -34,20 +34,20 @@
     --card-foreground: 210 40% 96%;
     --popover: 224 38% 10%;
     --popover-foreground: 210 40% 96%;
-    --primary: 189 94% 55%;
+    --primary: 43 96% 58%;
     --primary-foreground: 224 45% 6%;
     --secondary: 224 30% 16%;
     --secondary-foreground: 210 40% 96%;
     --muted: 224 28% 15%;
     --muted-foreground: 217 18% 65%;
-    --accent: 262 83% 65%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 38 92% 52%;
+    --accent-foreground: 224 45% 6%;
     --destructive: 0 72% 58%;
     --destructive-foreground: 0 0% 98%;
     --border: 224 25% 20%;
     --input: 224 25% 20%;
-    --ring: 189 94% 55%;
-    --grid-line: 189 94% 70% / 0.08;
+    --ring: 43 96% 58%;
+    --grid-line: 43 96% 70% / 0.1;
   }
 }
 
@@ -57,7 +57,9 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-image: radial-gradient(circle at 15% 0%, hsl(var(--primary) / 0.08), transparent 45%);
+    background-image:
+      radial-gradient(circle at 8% 0%, hsl(var(--primary) / 0.12), transparent 42%),
+      radial-gradient(circle at 100% 100%, hsl(var(--accent) / 0.06), transparent 38%);
     background-attachment: fixed;
     transition: background-color 0.2s ease, color 0.2s ease;
   }
@@ -96,7 +98,7 @@
 
 /* Frosted-glass panel used for sidebar/toolbar surfaces. */
 .glass-panel {
-  background-color: hsl(var(--card) / 0.85);
+  background-color: hsl(var(--card) / 0.88);
   backdrop-filter: blur(14px);
 }
 
