@@ -22,9 +22,9 @@ import { toast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { removeBackground, type BackgroundQuality } from '@/lib/imageTools/removeBackground'
-import { enhanceImage } from '@/lib/imageTools/enhanceImage'
-import { vectorizeToSvg, svgToPngBlob, type VectorizePreset } from '@/lib/imageTools/vectorize'
-import { downloadBlob, downloadText, withExtension } from '@/lib/imageTools/imageUtils'
+import { enhanceImage, type EnhanceProfile } from '@/lib/imageTools/enhanceImage'
+import { vectorizeToSvg, svgToPngBlob, type VectorizeFidelity, type VectorizePreset } from '@/lib/imageTools/vectorize'
+import { downloadBlob, downloadText, rasterBlobToPng, withExtension } from '@/lib/imageTools/imageUtils'
 import { EXPORT_PX_PER_CM } from '@/lib/constants'
 import type { StudioAsset } from './studioTypes'
 
@@ -63,14 +63,25 @@ function fileFromAsset(asset: StudioAsset): File {
   return new File([asset.resultBlob], withExtension(asset.name, extension), { type })
 }
 
+function vectorFilename(asset: StudioAsset): string {
+  const base = asset.name.replace(/\.[^./\\]+$/, '')
+  return `${base}${asset.vectorSource === 'traced' ? '-vetor' : ''}.svg`
+}
+
+function printablePreviewWidth(width: number) {
+  return Math.max(2400, Math.min(6000, width * 3))
+}
+
 export default function StudioWorkspace() {
   const navigate = useNavigate()
   const addImages = useGangSheetStore((s) => s.addImages)
 
   const [assets, setAssets] = useState<StudioAsset[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [enhanceScale, setEnhanceScale] = useState(2)
+  const [enhanceScale, setEnhanceScale] = useState(4)
+  const [enhanceProfile, setEnhanceProfile] = useState<EnhanceProfile>('balanced')
   const [vectorPreset, setVectorPreset] = useState<VectorizePreset>('logo')
+  const [vectorFidelity, setVectorFidelity] = useState<VectorizeFidelity>('high')
   const [backgroundQuality, setBackgroundQuality] = useState<BackgroundQuality>('quality')
   const [showOriginal, setShowOriginal] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -101,13 +112,18 @@ export default function StudioWorkspace() {
     const created = await Promise.all(accepted.map(async (file) => {
       const url = URL.createObjectURL(file)
       const { width, height } = await loadDims(file)
+      // Keep a genuine SVG untouched. Re-tracing an already-vector file would
+      // rasterize it first and reduce its quality, exactly what we want to avoid.
+      const originalSvg = file.type === 'image/svg+xml' ? await file.text() : null
       return {
         id: crypto.randomUUID(),
         name: file.name,
         originalUrl: url,
         resultBlob: file,
         resultUrl: url,
-        svg: null,
+        svg: originalSvg,
+        vectorSource: originalSvg ? 'original' : null,
+        vectorPathCount: originalSvg ? (originalSvg.match(/<path\b/gi) ?? []).length : null,
         width,
         height,
         busy: null,
@@ -163,7 +179,7 @@ export default function StudioWorkspace() {
           quality: backgroundQuality,
           onProgress: (p) => patchAsset(asset.id, { busy: p.stage, progress: p.ratio ?? null }),
         })
-        await setResult(asset.id, out, { svg: null })
+        await setResult(asset.id, out, { svg: null, vectorSource: null, vectorPathCount: null })
         if (!silent) toast({ title: 'Fundo removido', description: 'Fundo transparente pronto para download ou para a folha.' })
         return true
       } catch (err) {
@@ -199,36 +215,75 @@ export default function StudioWorkspace() {
       patchAsset(asset.id, { busy: `Melhorando (${enhanceScale}×) e gravando 300 DPI…`, progress: null })
       try {
         await yieldToPaint()
-        const out = await enhanceImage(asset.resultBlob, { scale: enhanceScale })
-        await setResult(asset.id, out, { svg: null })
-        toast({ title: 'Imagem melhorada', description: `Ampliada ${enhanceScale}× com 300 DPI.` })
+        const out = await enhanceImage(asset.resultBlob, { scale: enhanceScale, profile: enhanceProfile })
+        await setResult(asset.id, out.blob, { svg: null, vectorSource: null, vectorPathCount: null })
+        const scale = Number.isInteger(out.appliedScale) ? String(out.appliedScale) : out.appliedScale.toFixed(1)
+        toast({
+          title: 'Imagem melhorada',
+          description: `${out.width}×${out.height}px · ${scale}× · 300 DPI${out.capped ? ' (limite seguro do navegador aplicado)' : ''}.`,
+        })
       } catch (err) {
         toast({ variant: 'destructive', title: 'Falha ao melhorar', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
       } finally {
         patchAsset(asset.id, { busy: null, progress: null })
       }
     },
-    [enhanceScale, patchAsset, setResult]
+    [enhanceProfile, enhanceScale, patchAsset, setResult]
   )
 
   const runVectorize = useCallback(
     async (asset: StudioAsset) => {
+      if (asset.vectorSource === 'original' && asset.svg) {
+        toast({ title: 'Este arquivo já é vetor', description: 'O SVG original será preservado. Você já pode baixá-lo ou usá-lo na folha.' })
+        return
+      }
       patchAsset(asset.id, { busy: 'Vetorizando…', progress: null })
       try {
         await yieldToPaint()
-        const svg = await vectorizeToSvg(asset.resultBlob, vectorPreset)
-        // Rasterize only for a fast in-app preview. The original SVG is kept and
-        // sent to the sheet builder, where it stays crisp at any print size.
-        const png = await svgToPngBlob(svg, Math.max(1600, Math.min(4000, asset.width * 2)))
-        await setResult(asset.id, png, { svg })
-        toast({ title: 'Arte vetorizada', description: 'O SVG ficou pronto para Corel e para usar na folha sem perder definição.' })
+        const vector = await vectorizeToSvg(asset.resultBlob, { preset: vectorPreset, fidelity: vectorFidelity })
+        // Rasterize only for a sharp in-app PNG preview. The SVG itself stays
+        // intact and is the file sent to the gang sheet and offered for download.
+        const previewWidth = printablePreviewWidth(Math.max(asset.width, vector.tracePlan.sourceWidth))
+        const png = await svgToPngBlob(vector.svg, previewWidth)
+        await setResult(asset.id, png, { svg: vector.svg, vectorSource: 'traced', vectorPathCount: vector.pathCount })
+        toast({
+          title: 'Vetor fiel pronto',
+          description: `${vector.pathCount} forma(s) vetoriais · SVG pronto para Corel e para a folha DTF. Para fotos e degradês, prefira PNG.`,
+        })
       } catch (err) {
         toast({ variant: 'destructive', title: 'Falha ao vetorizar', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
       } finally {
         patchAsset(asset.id, { busy: null, progress: null })
       }
     },
-    [vectorPreset, patchAsset, setResult]
+    [vectorFidelity, vectorPreset, patchAsset, setResult]
+  )
+
+  const downloadPng = useCallback(
+    async (asset: StudioAsset) => {
+      try {
+        // An uploaded SVG is already perfect as vector, but a button labelled
+        // PNG must still download a real 300 DPI PNG — never SVG bytes with a
+        // misleading .png extension.
+        if (asset.resultBlob.type === 'image/svg+xml' && asset.svg) {
+          patchAsset(asset.id, { busy: 'Gerando PNG a 300 DPI…', progress: null })
+          const png = await svgToPngBlob(asset.svg, printablePreviewWidth(asset.width))
+          downloadBlob(png, withExtension(asset.name, 'png'))
+        } else if (asset.resultBlob.type !== 'image/png') {
+          patchAsset(asset.id, { busy: 'Gerando PNG a 300 DPI…', progress: null })
+          const { changeDpiBlob } = await import('changedpi')
+          const png = await changeDpiBlob(await rasterBlobToPng(asset.resultBlob), 300)
+          downloadBlob(png, withExtension(asset.name, 'png'))
+        } else {
+          downloadBlob(asset.resultBlob, withExtension(asset.name, 'png'))
+        }
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Falha ao exportar PNG', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
+      } finally {
+        patchAsset(asset.id, { busy: null, progress: null })
+      }
+    },
+    [patchAsset]
   )
 
   const removeAsset = useCallback((id: string) => {
@@ -273,7 +328,7 @@ export default function StudioWorkspace() {
             Studio de Imagem
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Remova o fundo, melhore para 300 DPI e vetorize — tudo no navegador.
+            Remova o fundo, prepare para 300 DPI e gere SVG fiel para logos e escritas.
           </p>
         </div>
 
@@ -333,7 +388,9 @@ export default function StudioWorkspace() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{a.name}</p>
                     <p className="truncate text-[10px] text-muted-foreground">
-                      {a.busy ? a.busy : `${a.width}×${a.height}px${a.svg ? ' · Vetor pronto' : ''}`}
+                      {a.busy
+                        ? a.busy
+                        : `${a.width}×${a.height}px${a.svg ? a.vectorSource === 'original' ? ' · SVG original' : ` · Vetor: ${a.vectorPathCount ?? 0} formas` : ''}`}
                     </p>
                   </div>
                 </button>
@@ -384,7 +441,7 @@ export default function StudioWorkspace() {
               </div>
               <p className="text-base font-semibold">Envie uma arte para começar</p>
               <p className="text-xs text-muted-foreground">
-                Aqui você tira o fundo, melhora a qualidade e vetoriza — e manda direto pra folha DTF.
+                Aqui você tira o fundo, melhora a qualidade e cria SVG para logos — e manda direto pra folha DTF.
               </p>
             </div>
           </div>
@@ -401,7 +458,12 @@ export default function StudioWorkspace() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">{selected.width}×{selected.height}px</Badge>
-                  {selected.svg && <Badge variant="success"><CheckCircle2 className="mr-1 h-3 w-3" />Vetor</Badge>}
+                  {selected.svg && (
+                    <Badge variant="success">
+                      <CheckCircle2 className="mr-1 h-3 w-3" />
+                      {selected.vectorSource === 'original' ? 'SVG original' : 'Vetor pronto'}
+                    </Badge>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -475,7 +537,7 @@ export default function StudioWorkspace() {
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <WandSparkles className="h-4 w-4 text-primary" /> Preparar para impressão
                 </div>
-                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Amplia com nitidez sem inventar detalhes. O arquivo sai identificado como 300 DPI.</p>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Amplia com filtro de impressão sem deformar nem inventar detalhes. O PNG sai identificado como 300 DPI.</p>
                 <div className="mb-2 flex gap-1">
                   {[2, 4].map((s) => (
                     <button
@@ -492,6 +554,22 @@ export default function StudioWorkspace() {
                     </button>
                   ))}
                 </div>
+                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-muted/50 p-1">
+                  {(['balanced', 'crisp'] as EnhanceProfile[]).map((profile) => (
+                    <button
+                      key={profile}
+                      type="button"
+                      disabled={anyBusy}
+                      onClick={() => setEnhanceProfile(profile)}
+                      className={cn(
+                        'rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        enhanceProfile === profile ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {profile === 'balanced' ? 'Mais fiel' : 'Letras e logos'}
+                    </button>
+                  ))}
+                </div>
                 <Button className="w-full" variant="secondary" disabled={anyBusy} onClick={() => runEnhance(selected)}>
                   Melhorar qualidade
                 </Button>
@@ -502,7 +580,7 @@ export default function StudioWorkspace() {
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <PenTool className="h-4 w-4 text-primary" /> Vetorizar
                 </div>
-                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Ideal para logos e traços. Ao enviar para a folha, o SVG mantém a definição em qualquer medida.</p>
+                <p className="mb-2 text-[11px] leading-relaxed text-muted-foreground">Para logos, letras e desenhos chapados. O SVG preserva a proporção; fotos, texturas e degradês devem ficar em PNG.</p>
                 <div className="mb-2 grid grid-cols-3 gap-1">
                   {(['logo', 'detailed', 'mono'] as VectorizePreset[]).map((p) => (
                     <button
@@ -519,19 +597,35 @@ export default function StudioWorkspace() {
                     </button>
                   ))}
                 </div>
-                <Button className="w-full" variant="secondary" disabled={anyBusy} onClick={() => runVectorize(selected)}>
-                  Gerar vetor (SVG)
+                <div className="mb-2 grid grid-cols-2 gap-1 rounded-lg bg-muted/50 p-1">
+                  {(['high', 'balanced'] as VectorizeFidelity[]).map((fidelity) => (
+                    <button
+                      key={fidelity}
+                      type="button"
+                      disabled={anyBusy || selected.vectorSource === 'original'}
+                      onClick={() => setVectorFidelity(fidelity)}
+                      className={cn(
+                        'rounded-md px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        vectorFidelity === fidelity ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {fidelity === 'high' ? 'Mais fiel' : 'Mais leve'}
+                    </button>
+                  ))}
+                </div>
+                <Button className="w-full" variant="secondary" disabled={anyBusy || selected.vectorSource === 'original'} onClick={() => runVectorize(selected)}>
+                  {selected.vectorSource === 'original' ? 'SVG original preservado' : 'Gerar vetor fiel (SVG)'}
                 </Button>
               </div>
 
               {/* Export / use */}
               <div className="mt-auto space-y-2 rounded-xl border bg-card/70 p-3 shadow-sm">
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="outline" size="sm" disabled={anyBusy} onClick={() => downloadBlob(selected.resultBlob, withExtension(selected.name, 'png'))}>
+                  <Button variant="outline" size="sm" disabled={anyBusy} onClick={() => void downloadPng(selected)}>
                     <Download className="h-4 w-4" /> PNG
                   </Button>
-                  <Button variant="outline" size="sm" disabled={anyBusy || !selected.svg} onClick={() => selected.svg && downloadText(selected.svg, withExtension(selected.name, 'svg'))} title={selected.svg ? 'Baixar SVG para o Corel' : 'Vetorize primeiro para habilitar o SVG'}>
-                    <FileCode2 className="h-4 w-4" /> SVG
+                  <Button variant="outline" size="sm" disabled={anyBusy || !selected.svg} onClick={() => selected.svg && downloadText(selected.svg, vectorFilename(selected))} title={selected.svg ? 'Baixar SVG vetorial para o Corel' : 'Vetorize primeiro para habilitar o SVG'}>
+                    <FileCode2 className="h-4 w-4" /> Baixar SVG
                   </Button>
                 </div>
                 <Button className="glow-primary w-full" disabled={anyBusy} onClick={() => sendToSheet([selected])}>

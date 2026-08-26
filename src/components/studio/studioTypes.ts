@@ -8,6 +8,10 @@ export interface StudioAsset {
   resultUrl: string
   /** Last vectorization output, if any — downloadable as .svg for CorelDRAW. */
   svg: string | null
+  /** Distinguishes an uploaded SVG from a raster image traced by the Studio. */
+  vectorSource: 'original' | 'traced' | null
+  /** Number of visible vector paths, useful to show that a tracing really completed. */
+  vectorPathCount: number | null
   width: number
   height: number
   /** Non-null while an operation runs; holds a human label for the spinner. */

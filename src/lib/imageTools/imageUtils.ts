@@ -46,6 +46,20 @@ export function canvasToBlob(
   })
 }
 
+/** Converts a decoded image to a real transparent PNG without changing its pixel dimensions. */
+export async function rasterBlobToPng(blob: Blob): Promise<Blob> {
+  const img = await loadImageFromBlob(blob)
+  const canvas = document.createElement('canvas')
+  canvas.width = img.naturalWidth
+  canvas.height = img.naturalHeight
+  const context = canvas.getContext('2d', { alpha: true })
+  if (!context) throw new Error('Canvas 2D indisponível neste navegador.')
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(img, 0, 0)
+  return canvasToBlob(canvas, 'image/png')
+}
+
 /** Triggers a browser download for a Blob. */
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)

@@ -22,7 +22,7 @@ MVP de um SaaS para montagem automática de "gang sheets" para impressão DTF.
   - Cria automaticamente uma nova página quando a altura máxima é excedida (auto-paginação).
 - "Download DTF" renderiza cada página a **300 DPI reais**, com fundo transparente e metadado de 300 DPI. O PNG usa somente a altura ocupada (mais 1 mm de margem final), evitando filme vazio; múltiplas páginas são entregues em `.zip`.
 - A fila mostra o DPI efetivo de cada arte no tamanho escolhido. Se você aumentar uma arte além da resolução original, o sistema avisa — ele não inventa qualidade nem reduz o arquivo silenciosamente.
-- O Studio permite remover fundo em lote, ampliar imagens para preparo de impressão e vetorizar logos. Ao enviar uma arte vetorizada para a folha, o SVG é preservado até a exportação final.
+- O Studio permite remover fundo em lote, ampliar imagens para preparo de impressão e vetorizar logos, letras e artes chapadas. A vetorização usa modo **Mais fiel** por padrão, preserva a proporção, remove contornos automáticos que engrossam a arte e permite baixar o resultado em **SVG**. SVGs enviados pelo usuário nunca são rasterizados ou retraçados sem necessidade.
 
 ## Rodando localmente
 

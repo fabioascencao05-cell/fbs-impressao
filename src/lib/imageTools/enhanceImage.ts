@@ -1,21 +1,53 @@
-// "Melhorar / preparar para 300 DPI": high-quality upscale via Lanczos
-// resampling (pica) plus an unsharp pass, then stamps 300 DPI metadata into the
-// PNG. This is honest resampling — it enlarges cleanly and sharpens, but does
-// not invent detail (that would need AI super-resolution, an optional paid step
-// documented separately). Runs fully in the browser.
+// "Melhorar / preparar para 300 DPI": high-quality resampling with Pica's
+// mks2013 filter. It keeps the original proportion and transparent pixels
+// intact; it improves edges for printing but deliberately does not invent
+// detail that is not present in the uploaded artwork.
 
 import { loadImageFromBlob, canvasToBlob } from './imageUtils'
 
 export interface EnhanceOptions {
   /** Upscale factor applied to the current pixel dimensions (e.g. 2 or 4). */
   scale: number
-  /** Whether to apply an unsharp mask for extra crispness. Default true. */
-  sharpen?: boolean
+  /** Balanced is safer for photos; crisp gives text and logos a little more edge definition. */
+  profile?: EnhanceProfile
 }
 
-const MAX_SIDE_PX = 12000 // guard against absurd canvases that would crash the tab
+export type EnhanceProfile = 'balanced' | 'crisp'
 
-export async function enhanceImage(input: Blob, options: EnhanceOptions): Promise<Blob> {
+export interface EnhanceResult {
+  blob: Blob
+  width: number
+  height: number
+  /** The factor actually applied after the browser-safety limits. */
+  appliedScale: number
+  capped: boolean
+}
+
+const MAX_SIDE_PX = 12_000
+const MAX_OUTPUT_PIXELS = 48_000_000
+
+/** Calculates a uniform, browser-safe target size without ever stretching the art. */
+export function getEnhanceDimensions(width: number, height: number, requestedScale: number) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+    throw new Error('A imagem não tem dimensões válidas para melhorar.')
+  }
+
+  const cleanScale = Number.isFinite(requestedScale) ? Math.max(1, requestedScale) : 1
+  const bySide = MAX_SIDE_PX / Math.max(width, height)
+  const byPixels = Math.sqrt(MAX_OUTPUT_PIXELS / (width * height))
+  const appliedScale = Math.min(cleanScale, bySide, byPixels)
+  const targetWidth = Math.max(1, Math.round(width * appliedScale))
+  const targetHeight = Math.max(1, Math.round(height * appliedScale))
+
+  return {
+    width: targetWidth,
+    height: targetHeight,
+    appliedScale,
+    capped: appliedScale + 0.001 < cleanScale,
+  }
+}
+
+export async function enhanceImage(input: Blob, options: EnhanceOptions): Promise<EnhanceResult> {
   const { default: Pica } = await import('pica')
   const { changeDpiBlob } = await import('changedpi')
 
@@ -28,26 +60,30 @@ export async function enhanceImage(input: Blob, options: EnhanceOptions): Promis
   if (!fctx) throw new Error('Canvas 2D indisponível neste navegador.')
   fctx.drawImage(img, 0, 0)
 
-  // Apply the requested factor, but cap the LONGEST side to MAX_SIDE_PX with a
-  // single uniform scale so the aspect ratio is preserved (clamping each axis
-  // independently would stretch non-square art).
-  const longest = Math.max(img.naturalWidth, img.naturalHeight)
-  const scale = Math.min(options.scale, MAX_SIDE_PX / longest)
-  const targetW = Math.max(1, Math.round(img.naturalWidth * scale))
-  const targetH = Math.max(1, Math.round(img.naturalHeight * scale))
+  const target = getEnhanceDimensions(img.naturalWidth, img.naturalHeight, options.scale)
 
   const to = document.createElement('canvas')
-  to.width = targetW
-  to.height = targetH
+  to.width = target.width
+  to.height = target.height
 
   const pica = Pica()
+  const crisp = options.profile === 'crisp'
   await pica.resize(from, to, {
-    unsharpAmount: options.sharpen === false ? 0 : 80,
+    // mks2013 is Pica's recommended production filter. A small optional
+    // unsharp pass improves letters without producing the white halos that an
+    // aggressive sharpen can create around transparent DTF artwork.
+    filter: 'mks2013',
+    unsharpAmount: crisp ? 75 : 35,
     unsharpRadius: 0.6,
-    unsharpThreshold: 2,
+    unsharpThreshold: crisp ? 3 : 5,
   })
 
   const png = await canvasToBlob(to, 'image/png')
-  // Stamp 300 DPI so print software reads the intended physical size.
-  return changeDpiBlob(png, 300)
+  return {
+    blob: await changeDpiBlob(png, 300),
+    width: target.width,
+    height: target.height,
+    appliedScale: target.appliedScale,
+    capped: target.capped,
+  }
 }
