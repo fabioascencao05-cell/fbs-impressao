@@ -98,15 +98,16 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="glass-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
-      <div className="flex items-center justify-between border-b px-4 py-3">
+    <aside className="glass-panel fbs-side-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
+      <div className="flex items-center justify-between border-b px-4 py-4">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="glow-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Layers className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold leading-tight">Gang Sheet Builder</h1>
-            <p className="truncate text-xs text-muted-foreground">DTF · empacotamento inteligente</p>
+            <p className="fbs-kicker mb-1">FBS DTF LAB</p>
+            <h1 className="truncate text-sm font-semibold leading-tight tracking-tight">Montador de Folha</h1>
+            <p className="truncate text-xs text-muted-foreground">DTF · aproveitamento inteligente</p>
           </div>
         </div>
         {onClose && (
@@ -119,7 +120,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
       <div className="space-y-3 px-4 py-3">
         <ImageUploadZone />
 
-        <div className="space-y-1.5 rounded-lg border bg-muted/40 p-2.5">
+        <div className="fbs-tool-card space-y-1.5 rounded-xl border bg-muted/40 p-2.5">
           <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             <Ruler className="h-3.5 w-3.5" /> Tamanho da Folha
           </p>
@@ -179,7 +180,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
       </div>
 
       {hasLayout && (
-        <div className="mx-4 rounded-xl border border-primary/20 bg-primary/5 p-3">
+        <div className="fbs-tool-card mx-4 rounded-2xl border border-primary/20 bg-primary/5 p-3">
           <div className="mb-2 flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary"><Gauge className="h-3.5 w-3.5" /> Aproveitamento</span>
             <span className="text-sm font-bold tabular-nums text-primary">{Math.round(layoutStats.efficiency)}%</span>
@@ -217,7 +218,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
       <ScrollArea className="flex-1 px-4 py-3">
         {images.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-8 text-center">
+          <div className="fbs-empty-state flex flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
             <ImageOff className="h-6 w-6 text-muted-foreground/60" />
             <p className="text-xs font-medium">Nenhuma imagem na fila</p>
             <p className="text-[11px] text-muted-foreground">Envie artes acima para começar</p>

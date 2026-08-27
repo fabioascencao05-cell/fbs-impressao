@@ -23,7 +23,7 @@
     --border: 214 20% 88%;
     --input: 214 20% 88%;
     --ring: 43 96% 48%;
-    --radius: 0.6rem;
+    --radius: 0.75rem;
     --grid-line: 222 20% 20% / 0.08;
   }
 
@@ -58,10 +58,15 @@
   body {
     @apply bg-background text-foreground;
     background-image:
-      radial-gradient(circle at 8% 0%, hsl(var(--primary) / 0.12), transparent 42%),
-      radial-gradient(circle at 100% 100%, hsl(var(--accent) / 0.06), transparent 38%);
+      radial-gradient(circle at 8% 0%, hsl(var(--primary) / 0.16), transparent 38%),
+      radial-gradient(circle at 100% 100%, hsl(var(--accent) / 0.09), transparent 34%),
+      linear-gradient(135deg, hsl(var(--background)), hsl(var(--background) / 0.98));
     background-attachment: fixed;
     transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+    color: hsl(var(--foreground));
   }
 }
 
@@ -74,9 +79,11 @@
 
 /* Dot-grid backdrop for the canvas workspace scroll area. */
 .workspace-bg {
-  background-color: hsl(var(--muted) / 0.3);
-  background-image: radial-gradient(hsl(var(--grid-line)) 1px, transparent 1px);
-  background-size: 22px 22px;
+  background-color: hsl(var(--muted) / 0.22);
+  background-image:
+    radial-gradient(hsl(var(--grid-line)) 1px, transparent 1px),
+    linear-gradient(180deg, hsl(var(--background) / 0.16), transparent 28%);
+  background-size: 22px 22px, 100% 100%;
 }
 
 /* Thin scrollbars across the app. */
@@ -98,8 +105,11 @@
 
 /* Frosted-glass panel used for sidebar/toolbar surfaces. */
 .glass-panel {
-  background-color: hsl(var(--card) / 0.88);
-  backdrop-filter: blur(14px);
+  background:
+    linear-gradient(135deg, hsl(var(--card) / 0.94), hsl(var(--card) / 0.75)),
+    hsl(var(--card) / 0.88);
+  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
 }
 
 /* Subtle glow accent for primary calls-to-action. */
@@ -109,4 +119,187 @@
 }
 .glow-primary:hover {
   box-shadow: 0 0 0 1px hsl(var(--primary) / 0.6), 0 0 32px -2px hsl(var(--primary) / 0.7);
+}
+
+/* FBS visual system: graphite glass, precision grid and a warm gold signal.
+   These are purposefully surface-level so the app stays fast and readable on
+   the dark production-room screens as well as on a phone in bright light. */
+.fbs-shell {
+  isolation: isolate;
+}
+
+.fbs-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.34;
+  background-image:
+    linear-gradient(hsl(var(--primary) / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(var(--primary) / 0.035) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: linear-gradient(to bottom, black, transparent 76%);
+}
+
+.fbs-orb {
+  animation: fbs-drift 13s ease-in-out infinite alternate;
+}
+
+.fbs-orb-delay {
+  animation-delay: -6s;
+}
+
+.fbs-top-nav {
+  box-shadow: 0 12px 28px -26px hsl(224 50% 2% / 0.8);
+}
+
+.fbs-nav-rail {
+  box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.035);
+}
+
+.fbs-kicker {
+  color: hsl(var(--primary));
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.17em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.fbs-status-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: #34d399;
+  box-shadow: 0 0 0 3px rgb(52 211 153 / 0.12), 0 0 14px rgb(52 211 153 / 0.85);
+  animation: fbs-pulse 2.4s ease-in-out infinite;
+}
+
+.fbs-side-panel {
+  box-shadow: 14px 0 34px -30px hsl(224 45% 4% / 0.8);
+}
+
+.fbs-upload-zone {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, hsl(var(--card) / 0.6), hsl(var(--muted) / 0.25));
+}
+
+.fbs-upload-zone::after {
+  content: '';
+  position: absolute;
+  inset: -90% 38% auto -45%;
+  height: 160%;
+  pointer-events: none;
+  transform: rotate(18deg);
+  background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.1), transparent);
+  transition: transform 0.5s ease;
+}
+
+.fbs-upload-zone:hover::after {
+  transform: translateX(150%) rotate(18deg);
+}
+
+.fbs-queue-item {
+  background: linear-gradient(135deg, hsl(var(--card) / 0.75), hsl(var(--card) / 0.42));
+}
+
+.fbs-preview-panel,
+.fbs-tool-card,
+.fbs-empty-state {
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 16px 35px -30px hsl(224 50% 4% / 0.9);
+}
+
+.fbs-preview-panel::before,
+.fbs-tool-card::before,
+.fbs-empty-state::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid hsl(var(--foreground) / 0.025);
+  border-radius: inherit;
+}
+
+.fbs-tool-card {
+  background:
+    linear-gradient(145deg, hsl(var(--card) / 0.86), hsl(var(--card) / 0.6)),
+    hsl(var(--card) / 0.72);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.fbs-tool-card:hover {
+  border-color: hsl(var(--primary) / 0.28);
+  box-shadow: 0 18px 38px -30px hsl(var(--primary) / 0.65);
+}
+
+.fbs-empty-state {
+  background:
+    radial-gradient(circle at 50% 0%, hsl(var(--primary) / 0.13), transparent 42%),
+    hsl(var(--card) / 0.58);
+}
+
+.fbs-range {
+  height: 0.65rem;
+  cursor: pointer;
+  accent-color: hsl(var(--primary));
+}
+
+.fbs-range:disabled {
+  cursor: not-allowed;
+}
+
+.fbs-range::-webkit-slider-runnable-track {
+  height: 0.3rem;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+}
+
+.fbs-range::-webkit-slider-thumb {
+  width: 0.78rem;
+  height: 0.78rem;
+  margin-top: -0.24rem;
+  border: 2px solid hsl(var(--background));
+  border-radius: 999px;
+  appearance: none;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.17);
+}
+
+.fbs-range::-moz-range-track {
+  height: 0.3rem;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+}
+
+.fbs-range::-moz-range-thumb {
+  width: 0.78rem;
+  height: 0.78rem;
+  border: 2px solid hsl(var(--background));
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.17);
+}
+
+@keyframes fbs-drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(28px, 18px, 0) scale(1.08); }
+}
+
+@keyframes fbs-pulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fbs-orb,
+  .fbs-status-dot {
+    animation: none;
+  }
+  .fbs-upload-zone::after {
+    transition: none;
+  }
 }

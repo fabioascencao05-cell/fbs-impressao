@@ -41,7 +41,7 @@ export default function CanvasToolbar({
 
   return (
     <div className="glass-panel sticky top-0 z-10 flex flex-wrap items-center gap-2 overflow-x-auto border-b px-4 py-2">
-      <div className="flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
+      <div className="fbs-nav-rail flex shrink-0 items-center gap-0.5 rounded-xl border bg-muted/40 p-0.5">
         <Button
           variant="ghost"
           size="icon"

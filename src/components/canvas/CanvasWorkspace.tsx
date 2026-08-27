@@ -151,7 +151,7 @@ export default function CanvasWorkspace() {
   }, [selection, handleDeleteSelected])
 
   return (
-    <main className="flex flex-1 flex-col overflow-hidden">
+    <main className="fbs-canvas flex flex-1 flex-col overflow-hidden">
       {visiblePages.length > 0 && (
         <CanvasToolbar
           zoom={zoom}
@@ -167,10 +167,11 @@ export default function CanvasWorkspace() {
       <div ref={scrollRef} className="workspace-bg flex-1 overflow-auto">
         {visiblePages.length === 0 ? (
           <div className="flex h-full items-center justify-center p-8">
-            <div className="flex max-w-md flex-col items-center gap-4 rounded-2xl border border-dashed bg-card/50 px-8 py-10 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <div className="fbs-empty-state flex max-w-md flex-col items-center gap-4 rounded-3xl border border-dashed bg-card/50 px-8 py-10 text-center">
+              <div className="glow-primary flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                 <Layers className="h-7 w-7" />
               </div>
+              <p className="fbs-kicker -mb-2">Fluxo de produção</p>
               <p className="text-base font-semibold text-foreground">Sua folha aparece aqui</p>
               <ol className="w-full space-y-2 text-left text-xs text-muted-foreground">
                 <li className="flex gap-2">
@@ -212,7 +213,7 @@ export default function CanvasWorkspace() {
               const pageCost = costPerCm2 > 0 ? filmAreaCm2 * costPerCm2 : 0
               return (
                 <div key={page.index} className="flex flex-col">
-                  <div className="mb-2 flex w-full items-center justify-between gap-4 rounded-lg border bg-card/70 px-3 py-1.5">
+                  <div className="fbs-tool-card mb-2 flex w-full items-center justify-between gap-4 rounded-xl border bg-card/70 px-3 py-1.5">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground/80">
                       <Layers className="h-3.5 w-3.5 text-muted-foreground" />
                       Página {page.index + 1} · {page.items.length} arte(s)
@@ -241,7 +242,7 @@ export default function CanvasWorkspace() {
                       </Button>
                     </div>
                   </div>
-                  <div className="flex flex-col shadow-lg ring-1 ring-black/10 dark:ring-white/10">
+                  <div className="overflow-hidden rounded-xl shadow-xl ring-1 ring-black/10 dark:ring-white/10">
                     <Ruler orientation="horizontal" lengthCm={canvasWidthCm} pxPerCm={pxPerCm} />
                     <CanvasPage
                       page={page}

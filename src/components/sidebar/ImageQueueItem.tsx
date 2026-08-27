@@ -13,7 +13,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
   const qualityLabel = effectiveDpi >= 300 ? '300 DPI ou mais' : `${Math.round(effectiveDpi)} DPI · pode perder definição`
 
   return (
-    <div className="flex min-w-0 gap-3 rounded-lg border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
+    <div className="fbs-queue-item flex min-w-0 gap-3 rounded-xl border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
       <img
         src={image.previewUrl}
         alt={image.file.name}

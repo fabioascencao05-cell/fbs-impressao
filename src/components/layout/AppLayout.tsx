@@ -48,7 +48,7 @@ export default function AppLayout() {
           <Menu className="h-5 w-5" />
         </Button>
         <Layers className="h-4 w-4 text-primary" />
-        <span className="text-sm font-semibold">Gang Sheet Builder</span>
+        <span className="text-sm font-semibold tracking-tight">Montador de Folha</span>
       </div>
 
       {sidebarOpen && (

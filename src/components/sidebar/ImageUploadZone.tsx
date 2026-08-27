@@ -35,8 +35,8 @@ export default function ImageUploadZone() {
   return (
     <div
       className={cn(
-        'flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors',
-        isDragging ? 'border-primary bg-accent ring-2 ring-primary/40' : 'border-input hover:bg-accent/50'
+        'fbs-upload-zone flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed px-4 py-6 text-center transition-all',
+        isDragging ? 'border-primary bg-accent ring-2 ring-primary/40' : 'border-input hover:border-primary/50 hover:bg-accent/50'
       )}
       onClick={() => inputRef.current?.click()}
       onDragOver={(e) => {
@@ -50,7 +50,7 @@ export default function ImageUploadZone() {
         handleFiles(e.dataTransfer.files)
       }}
     >
-      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary">
+      <div className="glow-primary flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
         <UploadCloud className="h-4 w-4" />
       </div>
       <p className="text-sm font-medium">Arraste imagens aqui</p>

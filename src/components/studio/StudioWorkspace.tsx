@@ -15,6 +15,8 @@ import {
   CheckCircle2,
   Layers3,
   WandSparkles,
+  CircleDot,
+  Palette,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +26,7 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { removeBackground, type BackgroundQuality } from '@/lib/imageTools/removeBackground'
 import { enhanceImage, type EnhanceProfile } from '@/lib/imageTools/enhanceImage'
 import { vectorizeToSvg, svgToPngBlob, type VectorizeFidelity, type VectorizePreset } from '@/lib/imageTools/vectorize'
+import { createHalftone, type HalftoneMode } from '@/lib/imageTools/halftone'
 import { downloadBlob, downloadText, rasterBlobToPng, withExtension } from '@/lib/imageTools/imageUtils'
 import { EXPORT_PX_PER_CM } from '@/lib/constants'
 import type { StudioAsset } from './studioTypes'
@@ -68,8 +71,48 @@ function vectorFilename(asset: StudioAsset): string {
   return `${base}${asset.vectorSource === 'traced' ? '-vetor' : ''}.svg`
 }
 
+function halftoneFilename(asset: StudioAsset): string {
+  return `${asset.name.replace(/\.[^./\\]+$/, '')}-halftone.svg`
+}
+
 function printablePreviewWidth(width: number) {
   return Math.max(2400, Math.min(6000, width * 3))
+}
+
+interface RangeControlProps {
+  id: string
+  label: string
+  value: number
+  min: number
+  max: number
+  step?: number
+  suffix?: string
+  disabled?: boolean
+  onChange: (value: number) => void
+}
+
+function RangeControl({ id, label, value, min, max, step = 1, suffix = '', disabled = false, onChange }: RangeControlProps) {
+  return (
+    <label htmlFor={id} className="block space-y-1.5">
+      <span className="flex items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground">
+        {label}
+        <output htmlFor={id} className="rounded-md border border-primary/15 bg-primary/5 px-1.5 py-0.5 font-semibold tabular-nums text-primary">
+          {value}{suffix}
+        </output>
+      </span>
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="fbs-range w-full"
+      />
+    </label>
+  )
 }
 
 export default function StudioWorkspace() {
@@ -83,6 +126,12 @@ export default function StudioWorkspace() {
   const [vectorPreset, setVectorPreset] = useState<VectorizePreset>('logo')
   const [vectorFidelity, setVectorFidelity] = useState<VectorizeFidelity>('high')
   const [backgroundQuality, setBackgroundQuality] = useState<BackgroundQuality>('quality')
+  const [halftoneMode, setHalftoneMode] = useState<HalftoneMode>('mono')
+  const [halftoneDotSize, setHalftoneDotSize] = useState(12)
+  const [halftoneSpacing, setHalftoneSpacing] = useState(18)
+  const [halftoneAngle, setHalftoneAngle] = useState(45)
+  const [halftoneIntensity, setHalftoneIntensity] = useState(100)
+  const [halftoneColor, setHalftoneColor] = useState('#111111')
   const [showOriginal, setShowOriginal] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [batchBusy, setBatchBusy] = useState<string | null>(null)
@@ -124,6 +173,7 @@ export default function StudioWorkspace() {
         svg: originalSvg,
         vectorSource: originalSvg ? 'original' : null,
         vectorPathCount: originalSvg ? (originalSvg.match(/<path\b/gi) ?? []).length : null,
+        halftoneSvg: null,
         width,
         height,
         busy: null,
@@ -179,7 +229,7 @@ export default function StudioWorkspace() {
           quality: backgroundQuality,
           onProgress: (p) => patchAsset(asset.id, { busy: p.stage, progress: p.ratio ?? null }),
         })
-        await setResult(asset.id, out, { svg: null, vectorSource: null, vectorPathCount: null })
+        await setResult(asset.id, out, { svg: null, vectorSource: null, vectorPathCount: null, halftoneSvg: null })
         if (!silent) toast({ title: 'Fundo removido', description: 'Fundo transparente pronto para download ou para a folha.' })
         return true
       } catch (err) {
@@ -216,7 +266,7 @@ export default function StudioWorkspace() {
       try {
         await yieldToPaint()
         const out = await enhanceImage(asset.resultBlob, { scale: enhanceScale, profile: enhanceProfile })
-        await setResult(asset.id, out.blob, { svg: null, vectorSource: null, vectorPathCount: null })
+        await setResult(asset.id, out.blob, { svg: null, vectorSource: null, vectorPathCount: null, halftoneSvg: null })
         const scale = Number.isInteger(out.appliedScale) ? String(out.appliedScale) : out.appliedScale.toFixed(1)
         toast({
           title: 'Imagem melhorada',
@@ -245,7 +295,7 @@ export default function StudioWorkspace() {
         // intact and is the file sent to the gang sheet and offered for download.
         const previewWidth = printablePreviewWidth(Math.max(asset.width, vector.tracePlan.sourceWidth))
         const png = await svgToPngBlob(vector.svg, previewWidth)
-        await setResult(asset.id, png, { svg: vector.svg, vectorSource: 'traced', vectorPathCount: vector.pathCount })
+        await setResult(asset.id, png, { svg: vector.svg, vectorSource: 'traced', vectorPathCount: vector.pathCount, halftoneSvg: null })
         toast({
           title: 'Vetor fiel pronto',
           description: `${vector.pathCount} forma(s) vetoriais · SVG pronto para Corel e para a folha DTF. Para fotos e degradês, prefira PNG.`,
@@ -257,6 +307,38 @@ export default function StudioWorkspace() {
       }
     },
     [vectorFidelity, vectorPreset, patchAsset, setResult]
+  )
+
+  const runHalftone = useCallback(
+    async (asset: StudioAsset) => {
+      patchAsset(asset.id, { busy: 'Criando retícula…', progress: null })
+      try {
+        await yieldToPaint()
+        const result = await createHalftone(asset.resultBlob, {
+          mode: halftoneMode,
+          dotSize: halftoneDotSize,
+          spacing: halftoneSpacing,
+          angle: halftoneAngle,
+          intensity: halftoneIntensity,
+          color: halftoneColor,
+        })
+        await setResult(asset.id, result.blob, {
+          svg: null,
+          vectorSource: null,
+          vectorPathCount: null,
+          halftoneSvg: result.svg,
+        })
+        toast({
+          title: 'Halftone pronto',
+          description: `${result.dotCount.toLocaleString('pt-BR')} ponto(s) · PNG transparente${result.svg ? ' e SVG de pontos editável' : ''}${result.capped ? ' · limite seguro aplicado' : ''}.`,
+        })
+      } catch (err) {
+        toast({ variant: 'destructive', title: 'Falha ao criar halftone', description: err instanceof Error ? err.message : 'Erro desconhecido.' })
+      } finally {
+        patchAsset(asset.id, { busy: null, progress: null })
+      }
+    },
+    [halftoneAngle, halftoneColor, halftoneDotSize, halftoneIntensity, halftoneMode, halftoneSpacing, patchAsset, setResult]
   )
 
   const downloadPng = useCallback(
@@ -319,15 +401,16 @@ export default function StudioWorkspace() {
   const maxPrintWidthCm = selected ? selected.width / EXPORT_PX_PER_CM : 0
 
   return (
-    <div className="flex h-full flex-col overflow-hidden md:flex-row">
+    <div className="fbs-studio flex h-full flex-col overflow-hidden md:flex-row">
       {/* ── Left: upload + queue ─────────────────────────────────────── */}
-      <aside className="glass-panel flex w-full shrink-0 flex-col border-b md:h-full md:w-80 md:border-b-0 md:border-r">
-        <div className="border-b px-4 py-3">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
+      <aside className="glass-panel fbs-side-panel flex w-full shrink-0 flex-col border-b md:h-full md:w-80 md:border-b-0 md:border-r">
+        <div className="border-b px-4 py-4">
+          <p className="fbs-kicker mb-1">FBS DTF LAB</p>
+          <h2 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
             <Sparkles className="h-4 w-4 text-primary" />
             Studio de Imagem
           </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             Remova o fundo, prepare para 300 DPI e gere SVG fiel para logos e escritas.
           </p>
         </div>
@@ -340,8 +423,8 @@ export default function StudioWorkspace() {
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
             className={cn(
-              'flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors',
-              dragOver ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/60 hover:bg-muted/40'
+              'fbs-upload-zone flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-6 text-center transition-all',
+              dragOver ? 'border-primary bg-primary/10 shadow-[0_0_32px_-10px_hsl(var(--primary)/0.85)]' : 'border-border hover:border-primary/60 hover:bg-muted/40'
             )}
           >
             <div className="glow-primary flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15 text-primary">
@@ -368,7 +451,7 @@ export default function StudioWorkspace() {
 
         <div className="flex-1 space-y-2 overflow-y-auto px-4 pb-4">
           {assets.length === 0 ? (
-            <p className="rounded-lg border border-dashed px-3 py-6 text-center text-[11px] text-muted-foreground">
+            <p className="rounded-xl border border-dashed bg-card/30 px-3 py-6 text-center text-[11px] text-muted-foreground">
               Nenhuma arte ainda
             </p>
           ) : (
@@ -376,8 +459,8 @@ export default function StudioWorkspace() {
               <div
                 key={a.id}
                 className={cn(
-                  'group flex w-full items-center gap-3 rounded-lg border p-2 text-left transition-colors',
-                  a.id === selectedId ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
+                  'fbs-queue-item group flex w-full items-center gap-3 rounded-xl border p-2 text-left transition-all',
+                  a.id === selectedId ? 'border-primary/70 bg-primary/5 shadow-[0_8px_22px_-16px_hsl(var(--primary)/0.8)]' : 'hover:border-primary/30 hover:bg-muted/50'
                 )}
               >
                 <button type="button" onClick={() => setSelectedId(a.id)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
@@ -390,7 +473,7 @@ export default function StudioWorkspace() {
                     <p className="truncate text-[10px] text-muted-foreground">
                       {a.busy
                         ? a.busy
-                        : `${a.width}×${a.height}px${a.svg ? a.vectorSource === 'original' ? ' · SVG original' : ` · Vetor: ${a.vectorPathCount ?? 0} formas` : ''}`}
+                        : `${a.width}×${a.height}px${a.svg ? a.vectorSource === 'original' ? ' · SVG original' : ` · Vetor: ${a.vectorPathCount ?? 0} formas` : ''}${a.halftoneSvg ? ' · SVG de pontos' : ''}`}
                     </p>
                   </div>
                 </button>
@@ -414,7 +497,7 @@ export default function StudioWorkspace() {
         {assets.length > 0 && (
           <div className="space-y-2 border-t p-4">
             {batchBusy && (
-              <div className="flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary">
+              <div className="flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {batchBusy}
               </div>
@@ -435,7 +518,7 @@ export default function StudioWorkspace() {
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {!selected ? (
           <div className="flex flex-1 items-center justify-center p-8">
-            <div className="flex max-w-sm flex-col items-center gap-4 rounded-2xl border border-dashed bg-card/40 px-8 py-12 text-center">
+            <div className="fbs-empty-state flex max-w-sm flex-col items-center gap-4 rounded-3xl border border-dashed bg-card/40 px-8 py-12 text-center">
               <div className="glow-primary flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/15 text-primary">
                 <ImagePlus className="h-7 w-7" />
               </div>
@@ -446,9 +529,9 @@ export default function StudioWorkspace() {
             </div>
           </div>
         ) : (
-          <div className="grid flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px]">
             {/* Preview */}
-            <section className="flex min-h-[320px] flex-col overflow-hidden rounded-2xl border bg-card/70 shadow-sm">
+            <section className="fbs-preview-panel flex min-h-[320px] flex-col overflow-hidden rounded-2xl border bg-card/70 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2.5">
                 <div className="min-w-0">
                   <span className="block truncate text-sm font-semibold">{selected.name}</span>
@@ -462,6 +545,11 @@ export default function StudioWorkspace() {
                     <Badge variant="success">
                       <CheckCircle2 className="mr-1 h-3 w-3" />
                       {selected.vectorSource === 'original' ? 'SVG original' : 'Vetor pronto'}
+                    </Badge>
+                  )}
+                  {selected.halftoneSvg && (
+                    <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary">
+                      <CircleDot className="mr-1 h-3 w-3" /> SVG pontos
                     </Badge>
                   )}
                   <Button
@@ -506,7 +594,7 @@ export default function StudioWorkspace() {
             {/* Tools */}
             <section className="flex flex-col gap-3">
               {/* Remover fundo */}
-              <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
+              <div className="fbs-tool-card rounded-2xl border bg-card/70 p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <Scissors className="h-4 w-4 text-primary" /> Remover fundo
                 </div>
@@ -533,7 +621,7 @@ export default function StudioWorkspace() {
               </div>
 
               {/* Melhorar / 300 DPI */}
-              <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
+              <div className="fbs-tool-card rounded-2xl border bg-card/70 p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <WandSparkles className="h-4 w-4 text-primary" /> Preparar para impressão
                 </div>
@@ -576,7 +664,7 @@ export default function StudioWorkspace() {
               </div>
 
               {/* Vetorizar */}
-              <div className="rounded-xl border bg-card/70 p-3 shadow-sm">
+              <div className="fbs-tool-card rounded-2xl border bg-card/70 p-3 shadow-sm">
                 <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
                   <PenTool className="h-4 w-4 text-primary" /> Vetorizar
                 </div>
@@ -618,8 +706,79 @@ export default function StudioWorkspace() {
                 </Button>
               </div>
 
+              {/* Halftone */}
+              <div className="fbs-tool-card rounded-2xl border bg-card/70 p-3 shadow-sm">
+                <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                  <CircleDot className="h-4 w-4 text-primary" /> Halftone
+                </div>
+                <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
+                  Cria pontos com fundo transparente para efeitos de estampa, sem reduzir o tamanho da arte.
+                </p>
+                <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border/70 bg-muted/40 p-1">
+                  {(['mono', 'cmyk'] as HalftoneMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      disabled={anyBusy}
+                      onClick={() => setHalftoneMode(mode)}
+                      className={cn(
+                        'rounded-lg px-2 py-1.5 text-[11px] font-semibold transition-all',
+                        halftoneMode === mode ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                      )}
+                    >
+                      {mode === 'mono' ? '1 cor + SVG' : 'CMYK visual'}
+                    </button>
+                  ))}
+                </div>
+                <div className="space-y-2.5">
+                  <RangeControl id="halftone-dot" label="Tamanho do ponto" value={halftoneDotSize} min={2} max={48} suffix=" px" disabled={anyBusy} onChange={setHalftoneDotSize} />
+                  <RangeControl id="halftone-spacing" label="Espaçamento" value={halftoneSpacing} min={4} max={64} suffix=" px" disabled={anyBusy} onChange={setHalftoneSpacing} />
+                  <RangeControl id="halftone-intensity" label="Intensidade" value={halftoneIntensity} min={20} max={180} suffix="%" disabled={anyBusy} onChange={setHalftoneIntensity} />
+                </div>
+                <div className="mt-3">
+                  <span className="mb-1.5 block text-[11px] font-medium text-muted-foreground">Ângulo da retícula</span>
+                  <div className="grid grid-cols-5 gap-1">
+                    {[0, 15, 30, 45, 60, 75, 90].map((angle) => (
+                      <button
+                        key={angle}
+                        type="button"
+                        disabled={anyBusy}
+                        onClick={() => setHalftoneAngle(angle)}
+                        className={cn(
+                          'rounded-md border px-1 py-1 text-[10px] font-semibold tabular-nums transition-colors',
+                          halftoneAngle === angle ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/50'
+                        )}
+                      >
+                        {angle}°
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {halftoneMode === 'mono' ? (
+                  <label className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/25 px-2.5 py-2 text-[11px] font-medium text-muted-foreground">
+                    <span className="flex items-center gap-1.5"><Palette className="h-3.5 w-3.5 text-primary" /> Cor dos pontos</span>
+                    <input
+                      type="color"
+                      value={halftoneColor}
+                      disabled={anyBusy}
+                      onChange={(event) => setHalftoneColor(event.target.value)}
+                      className="h-6 w-8 cursor-pointer rounded border border-border bg-transparent p-0.5 disabled:cursor-not-allowed"
+                      aria-label="Cor dos pontos do halftone"
+                    />
+                  </label>
+                ) : (
+                  <p className="mt-3 rounded-xl border border-primary/15 bg-primary/5 px-2.5 py-2 text-[10px] leading-relaxed text-muted-foreground">
+                    CMYK é um efeito visual em PNG RGB. A separação de tinta e o perfil final continuam no RIP da impressão.
+                  </p>
+                )}
+                <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">SVG de pontos é gerado no modo 1 cor quando o arquivo ficar leve para editar.</p>
+                <Button className="mt-3 w-full" variant="secondary" disabled={anyBusy} onClick={() => runHalftone(selected)}>
+                  <CircleDot className="h-4 w-4" /> Criar halftone
+                </Button>
+              </div>
+
               {/* Export / use */}
-              <div className="mt-auto space-y-2 rounded-xl border bg-card/70 p-3 shadow-sm">
+              <div className="fbs-tool-card mt-auto space-y-2 rounded-2xl border bg-card/70 p-3 shadow-sm">
                 <div className="grid grid-cols-2 gap-2">
                   <Button variant="outline" size="sm" disabled={anyBusy} onClick={() => void downloadPng(selected)}>
                     <Download className="h-4 w-4" /> PNG
@@ -628,6 +787,11 @@ export default function StudioWorkspace() {
                     <FileCode2 className="h-4 w-4" /> Baixar SVG
                   </Button>
                 </div>
+                {selected.halftoneSvg && (
+                  <Button variant="outline" size="sm" className="w-full" disabled={anyBusy} onClick={() => downloadText(selected.halftoneSvg!, halftoneFilename(selected))} title="Baixar os pontos do halftone em SVG editável">
+                    <CircleDot className="h-4 w-4" /> Baixar SVG do halftone
+                  </Button>
+                )}
                 <Button className="glow-primary w-full" disabled={anyBusy} onClick={() => sendToSheet([selected])}>
                   <SendHorizonal className="h-4 w-4" /> Usar na folha
                 </Button>

@@ -12,6 +12,8 @@ export interface StudioAsset {
   vectorSource: 'original' | 'traced' | null
   /** Number of visible vector paths, useful to show that a tracing really completed. */
   vectorPathCount: number | null
+  /** Editable dot SVG created by the one-colour halftone tool, if practical. */
+  halftoneSvg: string | null
   width: number
   height: number
   /** Non-null while an operation runs; holds a human label for the spinner. */

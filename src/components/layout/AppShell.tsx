@@ -7,10 +7,10 @@ import TopNav from './TopNav'
  */
 export default function AppShell() {
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden">
+    <div className="fbs-shell relative flex h-screen flex-col overflow-hidden">
       {/* Ambient background orbs (purely decorative). */}
-      <div className="pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-primary/10 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-accent/10 blur-3xl" />
+      <div className="fbs-orb pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-primary/10 blur-3xl" />
+      <div className="fbs-orb fbs-orb-delay pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-accent/10 blur-3xl" />
 
       <TopNav />
       <div className="relative z-10 min-h-0 flex-1">
