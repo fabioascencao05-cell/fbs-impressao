@@ -77,14 +77,14 @@ export default function Sidebar({ onClose }: SidebarProps) {
     }
     setIsExporting(true)
     try {
-      await downloadGangSheets(pages, canvasWidthCm, maxHeightCm)
+      await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm)
       const pageCount = pages.filter((p) => p.items.length > 0).length
       toast({
         title: 'Exportação concluída',
         description:
           pageCount > 1
-            ? `${pageCount} páginas exportadas em .zip a 300 DPI.`
-            : 'Folha exportada em PNG a 300 DPI (fundo transparente).',
+            ? `${pageCount} páginas em PNG transparente, 300 DPI e sem compressão com perda.`
+            : 'PNG transparente a 300 DPI, sem compressão com perda.',
       })
     } catch (err) {
       toast({

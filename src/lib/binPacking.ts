@@ -25,10 +25,11 @@ interface FreeRect {
 interface PageBucket {
   items: PlacedItem[]
   freeRects: FreeRect[]
+  usedHeightCm: number
 }
 
-type SortStrategy = 'area' | 'max-side' | 'height' | 'width'
-type FitStrategy = 'short-side' | 'area'
+type SortStrategy = 'area' | 'max-side' | 'min-side' | 'height' | 'width' | 'perimeter' | 'aspect'
+type FitStrategy = 'film-height' | 'bottom-left' | 'short-side' | 'long-side' | 'area'
 
 interface Candidate {
   pages: PackedPage[]
@@ -76,14 +77,26 @@ function sortUnits(units: PackableUnit[], strategy: SortStrategy): PackableUnit[
     const areaB = b.widthCm * b.heightCm
     const maxA = Math.max(a.widthCm, a.heightCm)
     const maxB = Math.max(b.widthCm, b.heightCm)
+    const minA = Math.min(a.widthCm, a.heightCm)
+    const minB = Math.min(b.widthCm, b.heightCm)
+    const perimeterA = a.widthCm + a.heightCm
+    const perimeterB = b.widthCm + b.heightCm
+    const aspectA = maxA / Math.max(minA, EPSILON)
+    const aspectB = maxB / Math.max(minB, EPSILON)
     const primary =
       strategy === 'area'
         ? areaB - areaA
         : strategy === 'max-side'
           ? maxB - maxA
-          : strategy === 'height'
-            ? b.heightCm - a.heightCm
-            : b.widthCm - a.widthCm
+          : strategy === 'min-side'
+            ? minB - minA
+            : strategy === 'height'
+              ? b.heightCm - a.heightCm
+              : strategy === 'width'
+                ? b.widthCm - a.widthCm
+                : strategy === 'perimeter'
+                  ? perimeterB - perimeterA
+                  : aspectB - aspectA
     if (Math.abs(primary) > EPSILON) return primary
     if (Math.abs(areaB - areaA) > EPSILON) return areaB - areaA
     return a.id.localeCompare(b.id)
@@ -131,34 +144,78 @@ interface Fit {
   rotated: boolean
   primary: number
   secondary: number
+  tertiary: number
+}
+
+function compareFit(a: Fit, b: Fit): number {
+  for (const key of ['primary', 'secondary', 'tertiary'] as const) {
+    if (a[key] < b[key] - EPSILON) return -1
+    if (a[key] > b[key] + EPSILON) return 1
+  }
+  if (a.rect.y < b.rect.y - EPSILON) return -1
+  if (a.rect.y > b.rect.y + EPSILON) return 1
+  if (a.rect.x < b.rect.x - EPSILON) return -1
+  if (a.rect.x > b.rect.x + EPSILON) return 1
+  return Number(a.rotated) - Number(b.rotated)
 }
 
 /**
- * Tries original and 90° orientations in every free rectangle.  Two fit
+ * Tries original and 90° orientations in every free rectangle. Multiple fit
  * heuristics are used in separate packing passes; comparing those passes is
  * much more reliable for mixed artwork than one fixed input order.
  */
-function findBestFit(freeRects: FreeRect[], width: number, height: number, strategy: FitStrategy): Fit | null {
+function findBestFit(
+  freeRects: FreeRect[],
+  width: number,
+  height: number,
+  itemGapCm: number,
+  currentUsedHeightCm: number,
+  strategy: FitStrategy
+): Fit | null {
   let best: Fit | null = null
 
   const consider = (placedWidth: number, placedHeight: number, rotated: boolean) => {
+    const reservedWidth = placedWidth + itemGapCm
+    const reservedHeight = placedHeight + itemGapCm
     for (const rect of freeRects) {
-      if (rect.width + EPSILON < placedWidth || rect.height + EPSILON < placedHeight) continue
-      const leftoverWidth = rect.width - placedWidth
-      const leftoverHeight = rect.height - placedHeight
+      if (rect.width + EPSILON < reservedWidth || rect.height + EPSILON < reservedHeight) continue
+      const leftoverWidth = rect.width - reservedWidth
+      const leftoverHeight = rect.height - reservedHeight
       const shortSide = Math.min(leftoverWidth, leftoverHeight)
       const longSide = Math.max(leftoverWidth, leftoverHeight)
-      const wastedArea = rect.width * rect.height - placedWidth * placedHeight
-      const primary = strategy === 'area' ? wastedArea : shortSide
-      const secondary = strategy === 'area' ? shortSide : longSide
-      if (
-        !best ||
-        primary < best.primary - EPSILON ||
-        (Math.abs(primary - best.primary) <= EPSILON && secondary < best.secondary - EPSILON) ||
-        (Math.abs(primary - best.primary) <= EPSILON && Math.abs(secondary - best.secondary) <= EPSILON && rect.y < best.rect.y - EPSILON)
-      ) {
-        best = { rect, rotated, primary, secondary }
+      const wastedArea = rect.width * rect.height - reservedWidth * reservedHeight
+      const bottom = rect.y + placedHeight
+      const heightGrowth = Math.max(0, bottom - currentUsedHeightCm)
+      let primary: number
+      let secondary: number
+      let tertiary: number
+
+      if (strategy === 'film-height') {
+        // The printer charges by film length. Prefer holes that add no height,
+        // even when a locally tighter rectangle exists lower in another page.
+        primary = heightGrowth
+        secondary = bottom
+        tertiary = wastedArea
+      } else if (strategy === 'bottom-left') {
+        primary = bottom
+        secondary = rect.x
+        tertiary = wastedArea
+      } else if (strategy === 'area') {
+        primary = wastedArea
+        secondary = shortSide
+        tertiary = bottom
+      } else if (strategy === 'long-side') {
+        primary = longSide
+        secondary = shortSide
+        tertiary = bottom
+      } else {
+        primary = shortSide
+        secondary = longSide
+        tertiary = bottom
       }
+
+      const candidate = { rect, rotated, primary, secondary, tertiary }
+      if (!best || compareFit(candidate, best) < 0) best = candidate
     }
   }
 
@@ -171,10 +228,7 @@ function buildPages(buckets: PageBucket[]): PackedPage[] {
   return buckets.map((bucket, index) => ({
     index,
     items: bucket.items,
-    usedHeightCm: bucket.items.reduce((bottom, item) => {
-      const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle)
-      return Math.max(bottom, item.yCm + box.hCm)
-    }, 0),
+    usedHeightCm: bucket.usedHeightCm,
   }))
 }
 
@@ -195,31 +249,26 @@ function packWithStrategy(
     const bucket: PageBucket = {
       items: [],
       freeRects: [{ x: 0, y: 0, width: canvasWidthCm + itemGapCm, height: maxHeightCm + itemGapCm }],
+      usedHeightCm: 0,
     }
     buckets.push(bucket)
     return bucket
   }
 
   for (const unit of sortUnits(units, sortStrategy)) {
-    const reservedWidth = unit.widthCm + itemGapCm
-    const reservedHeight = unit.heightCm + itemGapCm
     let target: { bucket: PageBucket; fit: Fit } | null = null
 
     for (const bucket of buckets) {
-      const fit = findBestFit(bucket.freeRects, reservedWidth, reservedHeight, fitStrategy)
+      const fit = findBestFit(bucket.freeRects, unit.widthCm, unit.heightCm, itemGapCm, bucket.usedHeightCm, fitStrategy)
       if (!fit) continue
-      if (
-        !target ||
-        fit.primary < target.fit.primary - EPSILON ||
-        (Math.abs(fit.primary - target.fit.primary) <= EPSILON && fit.secondary < target.fit.secondary - EPSILON)
-      ) {
+      if (!target || compareFit(fit, target.fit) < 0) {
         target = { bucket, fit }
       }
     }
 
     if (!target) {
       const bucket = openBucket()
-      const fit = findBestFit(bucket.freeRects, reservedWidth, reservedHeight, fitStrategy)
+      const fit = findBestFit(bucket.freeRects, unit.widthCm, unit.heightCm, itemGapCm, bucket.usedHeightCm, fitStrategy)
       if (!fit) {
         buckets.pop()
         unplaced.push({ sourceImageId: unit.sourceImageId, widthCm: unit.widthCm, heightCm: unit.heightCm })
@@ -250,6 +299,7 @@ function packWithStrategy(
       naturalHeightPx: unit.naturalHeightPx,
     })
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)
+    bucket.usedHeightCm = Math.max(bucket.usedHeightCm, fit.rect.y + box.hCm)
   }
 
   return { pages: buildPages(buckets), unplaced, name: `${sortStrategy}/${fitStrategy}` }
@@ -279,12 +329,35 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
   const units = expandQueue(images).filter((unit) => unit.widthCm > 0 && unit.heightCm > 0)
   if (units.length === 0) return { pages: [], unplaced: [], strategy: 'vazio' }
 
-  // Extra passes improve packing quality. Limit them on unusually huge queues
-  // so the browser remains responsive instead of locking up during O(n²) work.
+  // Mixed artwork needs more than one greedy order. Small/medium jobs get a
+  // broader deterministic search; very large queues keep a compact strategy
+  // set so the browser remains responsive.
   const strategies: Array<[SortStrategy, FitStrategy]> =
-    units.length > 350
-      ? [['area', 'short-side'], ['max-side', 'area']]
-      : [['area', 'short-side'], ['max-side', 'short-side'], ['height', 'area'], ['width', 'area']]
+    units.length <= 80
+      ? (['area', 'max-side', 'min-side', 'height', 'width', 'perimeter', 'aspect'] as SortStrategy[]).flatMap(
+          (sort) =>
+            (['film-height', 'bottom-left', 'short-side', 'area'] as FitStrategy[]).map(
+              (fit): [SortStrategy, FitStrategy] => [sort, fit]
+            )
+        )
+      : units.length <= 350
+        ? [
+            ['area', 'film-height'],
+            ['max-side', 'film-height'],
+            ['height', 'film-height'],
+            ['width', 'film-height'],
+            ['area', 'bottom-left'],
+            ['max-side', 'bottom-left'],
+            ['area', 'short-side'],
+            ['max-side', 'area'],
+            ['perimeter', 'long-side'],
+          ]
+        : [
+            ['area', 'film-height'],
+            ['max-side', 'film-height'],
+            ['area', 'bottom-left'],
+            ['max-side', 'short-side'],
+          ]
 
   let best = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, strategies[0][0], strategies[0][1])
   for (const [sortStrategy, fitStrategy] of strategies.slice(1)) {

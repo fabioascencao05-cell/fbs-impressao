@@ -1,16 +1,35 @@
+import { useMemo } from 'react'
 import { Trash2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
+import { isPrintReadyDpi, minimumEffectivePrintDpi } from '@/lib/printQuality'
 import type { GangImage } from '@/types'
 
 export default function ImageQueueItem({ image }: { image: GangImage }) {
   const updateQuantity = useGangSheetStore((s) => s.updateQuantity)
   const updateWidthCm = useGangSheetStore((s) => s.updateWidthCm)
   const removeImage = useGangSheetStore((s) => s.removeImage)
-  const effectiveDpi = (image.contentWidthPx / image.widthCm) * 2.54
-  const qualityLabel = effectiveDpi >= 300 ? '300 DPI ou mais' : `${Math.round(effectiveDpi)} DPI · pode perder definição`
+  const pages = useGangSheetStore((s) => s.pages)
+  const isVector = image.file.type === 'image/svg+xml'
+  const placedWidthsCm = useMemo(
+    () => pages.flatMap((page) => page.items.filter((item) => item.sourceImageId === image.id).map((item) => item.widthCm)),
+    [image.id, pages]
+  )
+  const effectiveDpi = minimumEffectivePrintDpi(
+    image.contentWidthPx,
+    placedWidthsCm.length > 0 ? placedWidthsCm : [image.widthCm]
+  )
+  const isPrintReady = isVector || isPrintReadyDpi(effectiveDpi)
+  const qualityLabel = isVector
+    ? 'SVG renderizado no PNG final a 300 DPI'
+    : isPrintReady
+      ? `Saída PNG 300 DPI · sem perda`
+      : `Saída PNG 300 DPI · arte original ${Math.round(effectiveDpi)} DPI`
+  const qualityHelp = isVector
+    ? 'O SVG é renderizado diretamente no tamanho final e a folha é baixada como PNG transparente a 300 DPI.'
+    : 'O download é PNG transparente a 300 DPI e não reduz a qualidade original. A nitidez disponível depende dos pixels da arte no tamanho escolhido.'
 
   return (
     <div className="fbs-queue-item flex min-w-0 gap-3 rounded-xl border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
@@ -63,7 +82,10 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
         <p className="text-[11px] text-muted-foreground">
           Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
         </p>
-        <p className={`text-[11px] ${effectiveDpi >= 300 ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+        <p
+          className={`text-[11px] ${isPrintReady ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
+          title={qualityHelp}
+        >
           {qualityLabel}
         </p>
       </div>

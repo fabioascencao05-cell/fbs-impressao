@@ -60,4 +60,46 @@ describe('packImages', () => {
     expect(result.pages.flatMap((page) => page.items)).toHaveLength(100)
     expect(validateLayout(result.pages, 57, 25)).toEqual([])
   })
+
+  it('fills space on an existing short page before consuming more film on another page', () => {
+    const result = packImages(
+      [image('large', 50, 80), image('second-page', 30, 30), image('gap-filler', 27, 20)],
+      100,
+      57,
+      0
+    )
+
+    expect(result.unplaced).toEqual([])
+    expect(result.pages).toHaveLength(2)
+    expect(result.pages.reduce((sum, page) => sum + page.usedHeightCm, 0)).toBe(110)
+    expect(validateLayout(result.pages, 57, 100)).toEqual([])
+  })
+
+  it('preserves the requested cutting gap between packed arts', () => {
+    const gapCm = 0.3
+    const result = packImages([image('logo-a', 12, 8, 5), image('logo-b', 7, 13, 5)], 100, 57, gapCm)
+
+    expect(result.unplaced).toEqual([])
+    expect(validateLayout(result.pages, 57, 100, gapCm)).toEqual([])
+  })
+
+  it('packs 350 mixed copies without blocking the layout flow', () => {
+    const startedAt = performance.now()
+    const result = packImages(
+      [
+        image('a', 7, 6, 70),
+        image('b', 9, 5, 70),
+        image('c', 12, 8, 70),
+        image('d', 5, 13, 70),
+        image('e', 15, 4, 70),
+      ],
+      100,
+      57,
+      0.3
+    )
+
+    expect(result.unplaced).toEqual([])
+    expect(result.pages.flatMap((page) => page.items)).toHaveLength(350)
+    expect(performance.now() - startedAt).toBeLessThan(2_500)
+  })
 })

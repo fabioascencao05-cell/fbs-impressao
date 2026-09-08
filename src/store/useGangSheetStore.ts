@@ -2,11 +2,11 @@ import { create } from 'zustand'
 import { packImages } from '@/lib/binPacking'
 import { rotatedAabbCm } from '@/lib/geometry'
 import { computeContentBox } from '@/lib/trimImage'
+import { defaultPrintWidthCm } from '@/lib/printQuality'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
   DEFAULT_MAX_HEIGHT_CM,
-  EXPORT_PX_PER_CM,
   ZOOM_MAX,
   ZOOM_MIN,
 } from '@/lib/constants'
@@ -62,6 +62,12 @@ function computeUsedHeightCm(items: PlacedItem[]) {
   return items.reduce((max, it) => Math.max(max, itemBottomCm(it)), 0)
 }
 
+const clearedLayout = () => ({
+  pages: [] as PackedPage[],
+  unplacedImages: [] as GangSheetState['unplacedImages'],
+  packingStrategy: null,
+})
+
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   images: [],
   maxHeightCm: DEFAULT_MAX_HEIGHT_CM,
@@ -87,7 +93,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
           try {
             const box = await computeContentBox(file)
             const aspectRatio = box.heightPx / box.widthPx
-            const widthCm = Math.max(0.1, Math.round((box.widthPx / EXPORT_PX_PER_CM) * 10) / 10)
+            const widthCm = defaultPrintWidthCm(box.widthPx)
             const image: GangImage = {
               id: crypto.randomUUID(),
               file,
@@ -113,21 +119,24 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       newImages.push(...batch.filter((image): image is GangImage => image !== null))
     }
 
-    set((state) => ({ images: [...state.images, ...newImages], unplacedImages: [], packingStrategy: null }))
-    return { added: accepted.length, skipped }
+    set((state) => ({ images: [...state.images, ...newImages], ...clearedLayout() }))
+    return { added: newImages.length, skipped }
   },
 
   removeImage: (id) => {
     set((state) => {
       const target = state.images.find((img) => img.id === id)
       if (target) URL.revokeObjectURL(target.previewUrl)
+      const pages = state.pages
+        .map((page) => {
+          const items = page.items.filter((it) => it.sourceImageId !== id)
+          return { ...page, items, usedHeightCm: computeUsedHeightCm(items) }
+        })
+        .filter((page) => page.items.length > 0)
+        .map((page, index) => ({ ...page, index }))
       return {
         images: state.images.filter((img) => img.id !== id),
-        // Drop any placed instances of the removed source image from the layout.
-        pages: state.pages.map((page) => ({
-          ...page,
-          items: page.items.filter((it) => it.sourceImageId !== id),
-        })),
+        pages,
         unplacedImages: state.unplacedImages.filter((it) => it.sourceImageId !== id),
         packingStrategy: null,
       }
@@ -139,8 +148,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       images: state.images.map((img) =>
         img.id === id ? { ...img, quantity: Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : img.quantity } : img
       ),
-      unplacedImages: [],
-      packingStrategy: null,
+      ...clearedLayout(),
     }))
   },
 
@@ -151,21 +159,20 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
           ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
           : img
       ),
-      unplacedImages: [],
-      packingStrategy: null,
+      ...clearedLayout(),
     }))
   },
 
   setMaxHeightCm: (heightCm) => {
-    set((state) => ({ maxHeightCm: finiteAtLeast(heightCm, 1, state.maxHeightCm), unplacedImages: [], packingStrategy: null }))
+    set((state) => ({ maxHeightCm: finiteAtLeast(heightCm, 1, state.maxHeightCm), ...clearedLayout() }))
   },
 
   setCanvasWidthCm: (widthCm) => {
-    set((state) => ({ canvasWidthCm: finiteAtLeast(widthCm, 1, state.canvasWidthCm), unplacedImages: [], packingStrategy: null }))
+    set((state) => ({ canvasWidthCm: finiteAtLeast(widthCm, 1, state.canvasWidthCm), ...clearedLayout() }))
   },
 
   setItemGapCm: (gapCm) => {
-    set((state) => ({ itemGapCm: finiteAtLeast(gapCm, 0, state.itemGapCm), unplacedImages: [], packingStrategy: null }))
+    set((state) => ({ itemGapCm: finiteAtLeast(gapCm, 0, state.itemGapCm), ...clearedLayout() }))
   },
 
   generateLayout: () => {
@@ -238,7 +245,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 }))
 
 // Dev-only handle for automated end-to-end testing of layout/export.
-if (import.meta.env.DEV) {
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   ;(window as unknown as { __gangStore?: typeof useGangSheetStore }).__gangStore =
     useGangSheetStore
 }

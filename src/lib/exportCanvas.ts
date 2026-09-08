@@ -98,10 +98,15 @@ async function renderPageToBlob(page: PackedPage, canvasWidthCm: number, maxHeig
 }
 
 /** Renders transparent 300 DPI PNGs using only the film length actually used. */
-export async function downloadGangSheets(pages: PackedPage[], canvasWidthCm: number, maxHeightCm: number) {
+export async function downloadGangSheets(
+  pages: PackedPage[],
+  canvasWidthCm: number,
+  maxHeightCm: number,
+  itemGapCm: number
+) {
   const nonEmptyPages = pages.filter((page) => page.items.length > 0)
   if (nonEmptyPages.length === 0) return
-  const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm)
+  const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm)
   if (issues.length > 0) throw new Error(`${issues[0].message} Ajuste a arte ou clique em Re-empacotar antes de baixar.`)
 
   if (nonEmptyPages.length === 1) {

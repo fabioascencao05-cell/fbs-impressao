@@ -105,8 +105,10 @@ export function getHalftoneDimensions(width: number, height: number): HalftoneDi
   const byPixels = Math.sqrt(MAX_OUTPUT_PIXELS / (width * height))
   const scale = Math.min(1, bySide, byPixels)
   return {
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale)),
+    // Floor capped dimensions so pixel rounding can never cross the browser's
+    // safety limit by a few hundred pixels.
+    width: Math.max(1, Math.floor(width * scale)),
+    height: Math.max(1, Math.floor(height * scale)),
     scale,
     capped: scale < 0.999,
   }
