@@ -1,10 +1,9 @@
 import JSZip from 'jszip'
-import { EXPORT_END_MARGIN_CM, EXPORT_PX_PER_CM } from './constants'
+import { EXPORT_END_MARGIN_CM } from './constants'
+import { planExport } from './exportPlan'
 import { rotatedAabbCm } from './geometry'
 import { validateLayout } from './layoutValidation'
 import type { PackedPage, PlacedItem } from '@/types'
-
-const PNG_DPI = 300
 
 function exportedHeightCm(page: PackedPage, maxHeightCm: number): number {
   return Math.min(maxHeightCm, Math.max(0.1, page.usedHeightCm + EXPORT_END_MARGIN_CM))
@@ -19,20 +18,20 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   })
 }
 
-function drawItem(ctx: CanvasRenderingContext2D, item: PlacedItem, image: HTMLImageElement): void {
-  const scale = (item.widthCm * EXPORT_PX_PER_CM) / item.contentWidthPx
+function drawItem(ctx: CanvasRenderingContext2D, item: PlacedItem, image: HTMLImageElement, pxPerCm: number): void {
+  const scale = (item.widthCm * pxPerCm) / item.contentWidthPx
   const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
   const widthPx = item.contentWidthPx * scale
   const heightPx = item.contentHeightPx * scale
 
   ctx.save()
-  ctx.translate((item.xCm + box.wCm / 2) * EXPORT_PX_PER_CM, (item.yCm + box.hCm / 2) * EXPORT_PX_PER_CM)
+  ctx.translate((item.xCm + box.wCm / 2) * pxPerCm, (item.yCm + box.hCm / 2) * pxPerCm)
   ctx.rotate(((item.angle ?? 0) * Math.PI) / 180)
   ctx.drawImage(image, item.contentXPx, item.contentYPx, item.contentWidthPx, item.contentHeightPx, -widthPx / 2, -heightPx / 2, widthPx, heightPx)
   ctx.restore()
 }
 
-/** Adds an accurate 300 DPI pHYs entry to a browser-created PNG. */
+/** Replaces any browser density metadata with the actual export density. */
 function setPngDpi(blob: Blob, dpi: number): Promise<Blob> {
   return blob.arrayBuffer().then((buffer) => {
     const bytes = new Uint8Array(buffer)
@@ -48,11 +47,14 @@ function setPngDpi(blob: Blob, dpi: number): Promise<Blob> {
     chunk[16] = 1 // unit: metre
     view.setUint32(17, crc32(chunk.subarray(4, 17)))
 
-    const output = new Uint8Array(bytes.length + chunk.length)
-    output.set(bytes.slice(0, 33), 0)
-    output.set(chunk, 33)
-    output.set(bytes.slice(33), 33 + chunk.length)
-    return new Blob([output], { type: 'image/png' })
+    const parts: BlobPart[] = [bytes.slice(0, 33), chunk]
+    for (let offset = 33; offset < bytes.length;) {
+      const length = new DataView(bytes.buffer).getUint32(offset) + 12
+      const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8))
+      if (type !== 'pHYs') parts.push(bytes.slice(offset, offset + length))
+      offset += length
+    }
+    return new Blob(parts, { type: 'image/png' })
   })
 }
 
@@ -65,20 +67,18 @@ function crc32(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0
 }
 
-async function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
+async function canvasToPng(canvas: HTMLCanvasElement, dpi: number): Promise<Blob> {
   const raw = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Falha ao gerar PNG do canvas.'))), 'image/png')
   })
-  return setPngDpi(raw, PNG_DPI)
+  return setPngDpi(raw, dpi)
 }
 
 async function renderPageToBlob(page: PackedPage, canvasWidthCm: number, maxHeightCm: number): Promise<Blob> {
+  const plan = planExport(page, canvasWidthCm, exportedHeightCm(page, maxHeightCm))
   const canvas = document.createElement('canvas')
-  canvas.width = Math.round(canvasWidthCm * EXPORT_PX_PER_CM)
-  canvas.height = Math.round(exportedHeightCm(page, maxHeightCm) * EXPORT_PX_PER_CM)
-  if (canvas.width > 32_767 || canvas.height > 32_767 || canvas.width * canvas.height > 100_000_000) {
-    throw new Error('Esta página ficou grande demais para o navegador exportar com segurança. Diminua a altura máxima para dividir a folha em mais páginas.')
-  }
+  canvas.width = plan.widthPx
+  canvas.height = plan.heightPx
   const ctx = canvas.getContext('2d', { alpha: true })
   if (!ctx) throw new Error('Canvas 2D indisponível neste navegador.')
   ctx.imageSmoothingEnabled = true
@@ -92,12 +92,17 @@ async function renderPageToBlob(page: PackedPage, canvasWidthCm: number, maxHeig
   for (const item of page.items) {
     const image = images.get(item.previewUrl)
     if (!image) throw new Error('Não foi possível preparar uma arte para a exportação.')
-    drawItem(ctx, item, image)
+    drawItem(ctx, item, image, plan.pxPerCm)
   }
-  return canvasToPng(canvas)
+  try {
+    return await canvasToPng(canvas, plan.dpi)
+  } finally {
+    canvas.width = 0
+    canvas.height = 0
+  }
 }
 
-/** Renders transparent 300 DPI PNGs using only the film length actually used. */
+/** Exports at least 300 DPI, increasing density to retain every source's resolution. */
 export async function downloadGangSheets(
   pages: PackedPage[],
   canvasWidthCm: number,
@@ -108,6 +113,7 @@ export async function downloadGangSheets(
   if (nonEmptyPages.length === 0) return
   const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm)
   if (issues.length > 0) throw new Error(`${issues[0].message} Ajuste a arte ou clique em Re-empacotar antes de baixar.`)
+  nonEmptyPages.forEach((page) => planExport(page, canvasWidthCm, exportedHeightCm(page, maxHeightCm)))
 
   if (nonEmptyPages.length === 1) {
     const page = nonEmptyPages[0]

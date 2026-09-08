@@ -185,6 +185,7 @@ export default function CanvasPage({
           const scale = (item.widthCm * pxPerCm) / item.contentWidthPx
           const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle ?? 0)
           img.set({
+            strokeWidth: 0,
             cropX: item.contentXPx,
             cropY: item.contentYPx,
             width: item.contentWidthPx,

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { proportionatePatch } from '@/lib/exportPlan'
 import { packImages } from '@/lib/binPacking'
 import { rotatedAabbCm } from '@/lib/geometry'
 import { computeContentBox } from '@/lib/trimImage'
@@ -185,7 +186,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     set((state) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
-        const items = page.items.map((it) => (it.id === itemId ? { ...it, ...patch } : it))
+        const items = page.items.map((it) => (it.id === itemId ? proportionatePatch(it, patch) : it))
         const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),

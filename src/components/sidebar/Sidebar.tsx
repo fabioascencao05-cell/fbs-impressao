@@ -83,8 +83,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
         title: 'Exportação concluída',
         description:
           pageCount > 1
-            ? `${pageCount} páginas em PNG transparente, 300 DPI e sem compressão com perda.`
-            : 'PNG transparente a 300 DPI, sem compressão com perda.',
+            ? `${pageCount} páginas em PNG transparente, 300 DPI ou mais, sem redução de resolução.`
+            : 'PNG transparente a 300 DPI ou mais, sem redução de resolução.',
       })
     } catch (err) {
       toast({
