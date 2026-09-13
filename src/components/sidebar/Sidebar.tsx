@@ -251,8 +251,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
           onClick={handleGenerateLayout}
         >
           <LayoutGrid className="h-4 w-4" />
-          Gerar Layout
+          Otimizar encaixe
         </Button>
+        <p className="text-center text-[11px] text-muted-foreground">
+          Testa posições e giros de 90° para economizar filme, mantendo as medidas e o espaço de corte.
+        </p>
         <Button
           className="w-full"
           variant="secondary"

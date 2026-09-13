@@ -112,7 +112,7 @@ function rectContains(outer: FreeRect, inner: FreeRect): boolean {
   )
 }
 
-/** Maintains the non-overlapping free rectangles used by MaxRects. */
+/** MaxRects free rectangles can overlap; prune contained/duplicate entries. */
 function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
   const next: FreeRect[] = []
   for (const free of freeRects) {
@@ -136,7 +136,10 @@ function splitFreeRects(freeRects: FreeRect[], used: FreeRect): FreeRect[] {
   }
 
   const cleaned = next.filter((rect) => rect.width > EPSILON && rect.height > EPSILON)
-  return cleaned.filter((rect, index) => !cleaned.some((other, otherIndex) => otherIndex !== index && rectContains(other, rect)))
+  return cleaned.filter((rect, index) => !cleaned.some((other, otherIndex) =>
+    otherIndex !== index && rectContains(other, rect) &&
+    (otherIndex < index || !rectContains(rect, other))
+  ))
 }
 
 interface Fit {
@@ -238,7 +241,8 @@ function packWithStrategy(
   canvasWidthCm: number,
   itemGapCm: number,
   sortStrategy: SortStrategy,
-  fitStrategy: FitStrategy
+  fitStrategy: FitStrategy,
+  preserveOrder = false
 ): Candidate {
   const buckets: PageBucket[] = []
   const unplaced: PackingResult['unplaced'] = []
@@ -255,7 +259,7 @@ function packWithStrategy(
     return bucket
   }
 
-  for (const unit of sortUnits(units, sortStrategy)) {
+  for (const unit of preserveOrder ? units : sortUnits(units, sortStrategy)) {
     let target: { bucket: PageBucket; fit: Fit } | null = null
 
     for (const bucket of buckets) {
@@ -365,5 +369,66 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
     if (isBetter(candidate, best)) best = candidate
   }
 
-  return { pages: best.pages, unplaced: best.unplaced, strategy: best.name }
+  // Escape fixed descending orders: move different pieces to the front and
+  // reinsert others. Deterministic trials keep the same input reproducible.
+  // Always compare with the original result so extra search cannot regress it.
+  if (units.length <= 80) {
+    let order = sortUnits(units, 'area')
+    for (let trial = 0; trial < Math.min(32, units.length * 2); trial++) {
+      const next = [...order]
+      const from = (trial * 17 + 1) % next.length
+      const to = trial % 2 === 0 ? 0 : (trial * 7) % next.length
+      next.splice(to, 0, next.splice(from, 1)[0])
+      const candidate = packWithStrategy(next, maxHeightCm, canvasWidthCm, itemGapCm, 'area',
+        trial % 2 === 0 ? 'short-side' : 'film-height', true)
+      if (isBetter(candidate, best)) {
+        best = { ...candidate, name: 'ordem-otimizada' }
+        order = next
+      }
+    }
+    // Also reconsider page boundaries: compacting pages independently cannot
+    // move an art from one page into another page's otherwise wasted strip.
+    for (const ratio of [0.9, 0.75, 0.6, 0.5]) {
+      for (const [sort, fit] of strategies.filter(([, fit]) => fit === 'short-side' || fit === 'area')) {
+        const candidate = packWithStrategy(units, maxHeightCm * ratio, canvasWidthCm, itemGapCm, sort, fit)
+        if (isBetter(candidate, best)) best = { ...candidate, name: `${candidate.name}/redistribuido` }
+      }
+    }
+  }
+
+  // A tall empty sheet encourages greedy placements that leave long strips.
+  // Repack each page into shorter trial heights, forcing complementary rotated
+  // pieces to share rows. Keep only complete single-page improvements. Failed
+  // trials never drop copies or replace an already valid layout.
+  const byId = new Map(units.map((unit) => [unit.id, unit]))
+  let compressed = false
+  const pages = best.pages.map((page) => {
+    const pageUnits = page.items.map((item) => byId.get(item.id)!)
+    if (pageUnits.length < 2 || pageUnits.length > 350) return page
+    let winner = page
+    let lower = pageUnits.reduce((sum, unit) => sum + unit.widthCm * unit.heightCm, 0) / canvasWidthCm
+    let upper = page.usedHeightCm
+    const trials = pageUnits.length <= 80 ? 8 : 4
+    for (let trial = 0; trial < trials && upper - lower > 0.01; trial++) {
+      const height = (lower + upper) / 2
+      let found = false
+      for (const [sort, fit] of [
+        ['area', 'short-side'], ['max-side', 'area'],
+        ['width', 'bottom-left'], ['height', 'long-side'],
+      ] as Array<[SortStrategy, FitStrategy]>) {
+        const candidate = packWithStrategy(pageUnits, height, canvasWidthCm, itemGapCm, sort, fit)
+        if (candidate.unplaced.length || candidate.pages.length !== 1) continue
+        found = true
+        if (candidate.pages[0].usedHeightCm < winner.usedHeightCm - EPSILON) {
+          winner = { ...candidate.pages[0], index: page.index }
+          compressed = true
+        }
+      }
+      if (found) upper = winner.usedHeightCm
+      else lower = height
+    }
+    return winner
+  })
+
+  return { pages, unplaced: best.unplaced, strategy: best.name + (compressed ? '/compactado' : '') }
 }

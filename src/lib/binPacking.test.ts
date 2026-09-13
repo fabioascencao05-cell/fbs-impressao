@@ -102,4 +102,22 @@ describe('packImages', () => {
     expect(result.pages.flatMap((page) => page.items)).toHaveLength(350)
     expect(performance.now() - startedAt).toBeLessThan(2_500)
   })
+
+  it('reorders and rotates mixed arts to reduce the required film length', () => {
+    const dimensions = [
+      [14, 25], [4, 13], [17, 9], [5, 25], [19, 30], [19, 9],
+      [32, 42], [12, 38], [19, 8], [29, 34], [23, 29],
+    ]
+    const result = packImages(
+      dimensions.map(([width, height], index) => image(`mixed-${index}`, width, height)),
+      100,
+      57,
+      0.3
+    )
+    const filmLengthCm = result.pages.reduce((sum, page) => sum + page.usedHeightCm + 0.1, 0)
+
+    expect(result.unplaced).toEqual([])
+    expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
+    expect(filmLengthCm).toBeLessThanOrEqual(98)
+  })
 })
