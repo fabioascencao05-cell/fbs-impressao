@@ -145,4 +145,34 @@ describe('packImages', () => {
     expect(filmLengthCm).toBeLessThanOrEqual(68)
   })
 
+
+  it('alternates complementary mixed artwork to reduce film waste further', () => {
+    const dimensions = [
+      [23, 25],
+      [25, 15],
+      [32, 27],
+      [20, 18],
+      [15, 20],
+      [11, 15],
+      [35, 26],
+      [27, 31],
+    ]
+
+    const result = packImages(
+      dimensions.map(([width, height], index) => image(`refine-${index}`, width, height)),
+      100,
+      57,
+      0.3
+    )
+    const filmLengthCm = result.pages.reduce(
+      (sum, page) => sum + page.usedHeightCm + 0.1,
+      0
+    )
+
+    expect(result.unplaced).toEqual([])
+    expect(result.pages.flatMap((page) => page.items)).toHaveLength(dimensions.length)
+    expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
+    expect(filmLengthCm).toBeLessThanOrEqual(86)
+  })
+
 })
