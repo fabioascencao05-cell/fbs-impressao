@@ -1,23 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import type { Session } from '@supabase/supabase-js'
-import { supabase } from '@/lib/supabaseClient'
+import type { ReactNode } from 'react'
 import { AuthContext } from './auth-context'
 
+/**
+ * Local tool mode: the DTF editor does not persist business data and does not
+ * require Supabase to operate. Keeping the provider preserves the existing
+ * component API while removing the dependency on the old Auth backend.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true)
+  const signOut = async () => undefined
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setLoading(false)
-    })
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession))
-    return () => listener.subscription.unsubscribe()
-  }, [])
-
-  const signOut = async () => {
-    await supabase.auth.signOut()
-  }
-  return <AuthContext.Provider value={{ session, loading, signOut }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider value={{ session: null, loading: false, signOut }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
