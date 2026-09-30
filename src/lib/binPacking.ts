@@ -103,6 +103,60 @@ function sortUnits(units: PackableUnit[], strategy: SortStrategy): PackableUnit[
   })
 }
 
+
+interface OrderVariant {
+  name: string
+  units: PackableUnit[]
+}
+
+/**
+ * Deterministic order variants that deliberately mix large/small and
+ * portrait/landscape artwork. They complement the normal descending sorts:
+ * in DTF jobs, a locally "wrong" next piece can be exactly what closes a tall
+ * strip and saves several centimetres of film.
+ */
+function buildOrderVariants(units: PackableUnit[]): OrderVariant[] {
+  const areaSorted = sortUnits(units, 'area')
+
+  const zigZag: PackableUnit[] = []
+  let left = 0
+  let right = areaSorted.length - 1
+  while (left <= right) {
+    zigZag.push(areaSorted[left])
+    left++
+    if (left <= right) {
+      zigZag.push(areaSorted[right])
+      right--
+    }
+  }
+
+  const portrait = areaSorted.filter((unit) => unit.heightCm > unit.widthCm * 1.2)
+  const landscape = areaSorted.filter((unit) => unit.widthCm > unit.heightCm * 1.2)
+  const balanced = areaSorted.filter(
+    (unit) =>
+      unit.heightCm <= unit.widthCm * 1.2 &&
+      unit.widthCm <= unit.heightCm * 1.2
+  )
+
+  const orientationRoundRobin: PackableUnit[] = []
+  let index = 0
+  while (
+    index < portrait.length ||
+    index < landscape.length ||
+    index < balanced.length
+  ) {
+    if (index < portrait.length) orientationRoundRobin.push(portrait[index])
+    if (index < landscape.length) orientationRoundRobin.push(landscape[index])
+    if (index < balanced.length) orientationRoundRobin.push(balanced[index])
+    index++
+  }
+
+  return [
+    { name: 'area-zigzag', units: zigZag },
+    { name: 'orientacao-alternada', units: orientationRoundRobin },
+  ]
+}
+
 function rectContains(outer: FreeRect, inner: FreeRect): boolean {
   return (
     inner.x >= outer.x - EPSILON &&
@@ -558,6 +612,33 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
   for (const [sortStrategy, fitStrategy] of strategies.slice(1)) {
     const candidate = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, sortStrategy, fitStrategy)
     if (isBetter(candidate, best)) best = candidate
+  }
+
+
+  // Descending sorts are strong for homogeneous queues, but mixed DTF jobs can
+  // benefit from deliberately alternating complementary shapes. These passes
+  // remain deterministic and are bounded to keep interaction responsive.
+  if (units.length <= 120) {
+    const variantFits: FitStrategy[] =
+      units.length <= 50
+        ? ['film-height', 'short-side', 'area', 'long-side']
+        : ['film-height', 'short-side', 'area']
+
+    for (const variant of buildOrderVariants(units)) {
+      for (const fitStrategy of variantFits) {
+        const candidate = packWithStrategy(
+          variant.units,
+          maxHeightCm,
+          canvasWidthCm,
+          itemGapCm,
+          'area',
+          fitStrategy,
+          true
+        )
+        candidate.name = `${variant.name}/${fitStrategy}`
+        if (isBetter(candidate, best)) best = candidate
+      }
+    }
   }
 
   // Run an offline/global pass for mixed jobs. This removes the main weakness
