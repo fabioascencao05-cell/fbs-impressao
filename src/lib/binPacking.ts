@@ -309,6 +309,197 @@ function packWithStrategy(
   return { pages: buildPages(buckets), unplaced, name: `${sortStrategy}/${fitStrategy}` }
 }
 
+
+type GlobalScore = [number, number, number, number, number, number]
+
+function compareGlobalScore(a: GlobalScore, b: GlobalScore): number {
+  for (let index = 0; index < a.length; index++) {
+    if (a[index] < b[index] - EPSILON) return -1
+    if (a[index] > b[index] + EPSILON) return 1
+  }
+  return 0
+}
+
+function scoreGlobalPlacement(
+  unit: PackableUnit,
+  fit: Fit,
+  currentUsedHeightCm: number,
+  canvasWidthCm: number,
+  itemGapCm: number,
+  opensPage: boolean
+): GlobalScore {
+  const placedWidth = fit.rotated ? unit.heightCm : unit.widthCm
+  const placedHeight = fit.rotated ? unit.widthCm : unit.heightCm
+  const reservedWidth = placedWidth + itemGapCm
+  const reservedHeight = placedHeight + itemGapCm
+  const leftoverWidth = Math.max(0, fit.rect.width - reservedWidth)
+  const leftoverHeight = Math.max(0, fit.rect.height - reservedHeight)
+  const shortSide = Math.min(leftoverWidth, leftoverHeight)
+  const longSide = Math.max(leftoverWidth, leftoverHeight)
+  const wastedArea = Math.max(0, fit.rect.width * fit.rect.height - reservedWidth * reservedHeight)
+  const bottom = fit.rect.y + placedHeight
+  const heightGrowth = Math.max(0, bottom - currentUsedHeightCm)
+  const artArea = placedWidth * placedHeight
+
+  if (heightGrowth <= EPSILON) {
+    // First use holes that cost no additional film. Among them, prefer the
+    // tightest hole and then the largest artwork that consumes that hole.
+    return [0, wastedArea, shortSide, longSide, -artArea, bottom]
+  }
+
+  // When the roll must grow, prefer artwork that fills most of the new 57 cm
+  // band. This is the key difference from item-first greedy MaxRects: every
+  // remaining artwork competes for the next placement, so small/tall pieces can
+  // be pulled forward to complement larger pieces instead of staying grouped by
+  // upload or sort order.
+  const incrementalWaste = heightGrowth * Math.max(0, canvasWidthCm - placedWidth)
+  const pagePenalty = opensPage ? END_MARGIN_CM * canvasWidthCm : 0
+  return [1, incrementalWaste + pagePenalty, heightGrowth, shortSide, wastedArea, -artArea]
+}
+
+/**
+ * Offline/global MaxRects pass. Instead of choosing one artwork first and then
+ * finding a hole for it, evaluate every remaining artwork against every current
+ * page (plus a fresh page) and place the pair with the best marginal film cost.
+ * This deliberately mixes different artwork sizes when they complement each
+ * other's empty spaces.
+ */
+function packBestNext(
+  units: PackableUnit[],
+  maxHeightCm: number,
+  canvasWidthCm: number,
+  itemGapCm: number,
+  seedSortStrategy: SortStrategy,
+  fitStrategy: FitStrategy
+): Candidate {
+  const remaining = sortUnits(units, seedSortStrategy)
+  const buckets: PageBucket[] = []
+  const unplaced: PackingResult['unplaced'] = []
+
+  const makeBucket = (): PageBucket => ({
+    items: [],
+    freeRects: [{ x: 0, y: 0, width: canvasWidthCm + itemGapCm, height: maxHeightCm + itemGapCm }],
+    usedHeightCm: 0,
+  })
+
+  while (remaining.length > 0) {
+    let best:
+      | {
+          unitIndex: number
+          bucketIndex: number
+          fit: Fit
+          score: GlobalScore
+        }
+      | null = null
+
+    for (let unitIndex = 0; unitIndex < remaining.length; unitIndex++) {
+      const unit = remaining[unitIndex]
+
+      for (let bucketIndex = 0; bucketIndex < buckets.length; bucketIndex++) {
+        const bucket = buckets[bucketIndex]
+        const fit = findBestFit(
+          bucket.freeRects,
+          unit.widthCm,
+          unit.heightCm,
+          itemGapCm,
+          bucket.usedHeightCm,
+          fitStrategy
+        )
+        if (!fit) continue
+
+        const score = scoreGlobalPlacement(unit, fit, bucket.usedHeightCm, canvasWidthCm, itemGapCm, false)
+        if (!best || compareGlobalScore(score, best.score) < 0) {
+          best = { unitIndex, bucketIndex, fit, score }
+        }
+      }
+
+      const blankBucket = makeBucket()
+      const fitOnNewPage = findBestFit(
+        blankBucket.freeRects,
+        unit.widthCm,
+        unit.heightCm,
+        itemGapCm,
+        0,
+        fitStrategy
+      )
+      if (fitOnNewPage) {
+        const score = scoreGlobalPlacement(unit, fitOnNewPage, 0, canvasWidthCm, itemGapCm, true)
+        if (!best || compareGlobalScore(score, best.score) < 0) {
+          best = { unitIndex, bucketIndex: -1, fit: fitOnNewPage, score }
+        }
+      }
+    }
+
+    if (!best) {
+      for (const unit of remaining) {
+        unplaced.push({ sourceImageId: unit.sourceImageId, widthCm: unit.widthCm, heightCm: unit.heightCm })
+      }
+      break
+    }
+
+    const unit = remaining.splice(best.unitIndex, 1)[0]
+    let bucket: PageBucket
+    let fit = best.fit
+
+    if (best.bucketIndex === -1) {
+      bucket = makeBucket()
+      buckets.push(bucket)
+      // Re-evaluate against the real bucket so the free-rectangle reference is
+      // guaranteed to belong to the bucket we are about to split.
+      const freshFit = findBestFit(
+        bucket.freeRects,
+        unit.widthCm,
+        unit.heightCm,
+        itemGapCm,
+        0,
+        fitStrategy
+      )
+      if (!freshFit) {
+        buckets.pop()
+        unplaced.push({ sourceImageId: unit.sourceImageId, widthCm: unit.widthCm, heightCm: unit.heightCm })
+        continue
+      }
+      fit = freshFit
+    } else {
+      bucket = buckets[best.bucketIndex]
+    }
+
+    const angle = fit.rotated ? 90 : 0
+    const box = rotatedAabbCm(unit.widthCm, unit.heightCm, angle)
+    const used: FreeRect = {
+      x: fit.rect.x,
+      y: fit.rect.y,
+      width: box.wCm + itemGapCm,
+      height: box.hCm + itemGapCm,
+    }
+
+    bucket.items.push({
+      id: unit.id,
+      sourceImageId: unit.sourceImageId,
+      previewUrl: unit.previewUrl,
+      xCm: fit.rect.x,
+      yCm: fit.rect.y,
+      widthCm: unit.widthCm,
+      heightCm: unit.heightCm,
+      angle,
+      contentXPx: unit.contentXPx,
+      contentYPx: unit.contentYPx,
+      contentWidthPx: unit.contentWidthPx,
+      contentHeightPx: unit.contentHeightPx,
+      naturalWidthPx: unit.naturalWidthPx,
+      naturalHeightPx: unit.naturalHeightPx,
+    })
+    bucket.freeRects = splitFreeRects(bucket.freeRects, used)
+    bucket.usedHeightCm = Math.max(bucket.usedHeightCm, fit.rect.y + box.hCm)
+  }
+
+  return {
+    pages: buildPages(buckets),
+    unplaced,
+    name: `global-${seedSortStrategy}/${fitStrategy}`,
+  }
+}
+
 function candidateScore(candidate: Candidate): [number, number, number] {
   const totalHeight = candidate.pages.reduce((sum, page) => sum + page.usedHeightCm + END_MARGIN_CM, 0)
   return [candidate.unplaced.length, totalHeight, candidate.pages.length]
@@ -367,6 +558,42 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
   for (const [sortStrategy, fitStrategy] of strategies.slice(1)) {
     const candidate = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, sortStrategy, fitStrategy)
     if (isBetter(candidate, best)) best = candidate
+  }
+
+  // Run an offline/global pass for mixed jobs. This removes the main weakness
+  // of the greedy strategy above: an uploaded/sorted item no longer gets to
+  // claim a position before smaller complementary artwork has been considered.
+  // We cap this at 120 copies because the pass evaluates remaining items
+  // globally (roughly quadratic) and must stay responsive in the browser.
+  if (units.length <= 120) {
+    const globalStrategies: Array<[SortStrategy, FitStrategy]> =
+      units.length <= 50
+        ? [
+            ['area', 'short-side'],
+            ['max-side', 'area'],
+            ['width', 'short-side'],
+            ['height', 'area'],
+            ['perimeter', 'short-side'],
+            ['aspect', 'area'],
+          ]
+        : [
+            ['area', 'short-side'],
+            ['max-side', 'area'],
+            ['width', 'short-side'],
+            ['height', 'area'],
+          ]
+
+    for (const [seedSortStrategy, fitStrategy] of globalStrategies) {
+      const candidate = packBestNext(
+        units,
+        maxHeightCm,
+        canvasWidthCm,
+        itemGapCm,
+        seedSortStrategy,
+        fitStrategy
+      )
+      if (isBetter(candidate, best)) best = candidate
+    }
   }
 
   // Escape fixed descending orders: move different pieces to the front and

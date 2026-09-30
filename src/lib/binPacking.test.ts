@@ -120,4 +120,29 @@ describe('packImages', () => {
     expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
     expect(filmLengthCm).toBeLessThanOrEqual(98)
   })
+  it('globally mixes complementary artwork instead of locking into a greedy upload order', () => {
+    const dimensions = [
+      [14, 25],
+      [21, 26],
+      [31, 18],
+      [22, 15],
+      [31, 9],
+      [19, 15],
+      [16, 37],
+      [24, 22],
+    ]
+    const result = packImages(
+      dimensions.map(([width, height], index) => image(`global-mix-${index}`, width, height)),
+      100,
+      57,
+      0.3
+    )
+    const filmLengthCm = result.pages.reduce((sum, page) => sum + page.usedHeightCm + 0.1, 0)
+
+    expect(result.unplaced).toEqual([])
+    expect(result.pages.flatMap((page) => page.items)).toHaveLength(dimensions.length)
+    expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
+    expect(filmLengthCm).toBeLessThanOrEqual(68)
+  })
+
 })
