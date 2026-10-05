@@ -20,6 +20,8 @@ export interface GangImage {
   contentWidthPx: number
   contentHeightPx: number
   occupancyMask?: OccupancyMask
+  /** When true the automatic/manual layout keeps this artwork at 0°. */
+  rotationLocked?: boolean
 }
 
 export interface PlacedItem {
@@ -45,6 +47,7 @@ export interface PlacedItem {
   naturalWidthPx: number
   naturalHeightPx: number
   occupancyMask?: OccupancyMask
+  rotationLocked?: boolean
 }
 
 export interface PackedPage {
