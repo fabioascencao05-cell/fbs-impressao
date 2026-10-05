@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { rotatedAabbCm } from '@/lib/geometry'
+import { validateLayout } from '@/lib/layoutValidation'
 import type { PackedPage } from '@/types'
 
 export interface SelectionInfo {
@@ -26,11 +27,12 @@ interface HudInfo {
   widthCm: number
   heightCm: number
   angle: number
+  invalid?: boolean
 }
 
 // Fabric objects are tagged with the source PlacedItem id so selection/resize
 // events map straight back to the store entry they came from.
-type TaggedImage = fabric.FabricImage & { itemId?: string }
+type TaggedImage = fabric.FabricImage & { itemId?: string; rotationLocked?: boolean }
 
 const BACKGROUND_PRESETS: Record<string, string> = {
   checkerboard:
@@ -48,6 +50,8 @@ export default function CanvasPage({
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
+  const maxHeightCm = useGangSheetStore((s) => s.maxHeightCm)
+  const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const [hud, setHud] = useState<HudInfo | null>(null)
 
   const widthPx = canvasWidthCm * pxPerCm
@@ -150,7 +154,7 @@ export default function CanvasPage({
     const onModified = (e: { target?: fabric.FabricObject }) => {
       const obj = e.target as TaggedImage | undefined
       if (!obj?.itemId) return
-      obj.set('angle', Math.round((obj.angle ?? 0) / 90) * 90)
+      obj.set('angle', obj.rotationLocked ? 0 : Math.round((obj.angle ?? 0) / 90) * 90)
       clampToSheet(obj)
       const rect = contentRectCm(obj)
       if (!rect) return
@@ -161,6 +165,12 @@ export default function CanvasPage({
         heightCm: rect.heightCm,
         angle: obj.angle ?? 0,
       })
+      const updatedPage = useGangSheetStore.getState().pages.find((candidate) => candidate.index === pageIndex)
+      if (updatedPage) {
+        const invalid = validateLayout([updatedPage], canvasWidthCm, maxHeightCm, itemGapCm)
+          .some((issue) => issue.itemIds.includes(obj.itemId!))
+        setHud((current) => current ? { ...current, invalid } : current)
+      }
     }
 
     canvas.on('selection:created', reportSelection)
@@ -199,6 +209,7 @@ export default function CanvasPage({
             angle: item.angle ?? 0,
             snapAngle: 90,
             snapThreshold: 45,
+            lockRotation: item.rotationLocked === true,
             scaleX: scale,
             scaleY: scale,
             selectable: true,
@@ -210,9 +221,10 @@ export default function CanvasPage({
             transparentCorners: false,
           })
           // Only the 4 corners (proportional resize) + rotation stay interactive.
-          img.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false })
+          img.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false, mtr: item.rotationLocked !== true })
           const tagged = img as TaggedImage
           tagged.itemId = item.id
+          tagged.rotationLocked = item.rotationLocked
           return img
         })
       )
@@ -232,7 +244,7 @@ export default function CanvasPage({
       canvas.off('object:rotating', onRotating)
       canvas.off('object:modified', onModified)
     }
-  }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, updatePlacedItem])
+  }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, updatePlacedItem, canvasWidthCm, maxHeightCm, itemGapCm])
 
   const backgroundStyle = BACKGROUND_PRESETS[sheetBackgroundColor]
     ? { backgroundImage: BACKGROUND_PRESETS[sheetBackgroundColor], backgroundSize: '20px 20px' }
@@ -254,11 +266,12 @@ export default function CanvasPage({
           always fully visible and updates live while moving/scaling/rotating. */}
       {hud && (
         <div
-          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-zinc-900/90 px-2 py-1 text-[11px] font-medium tabular-nums text-white shadow-lg dark:bg-zinc-800/95"
+          className={`pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md px-2 py-1 text-[11px] font-medium tabular-nums text-white shadow-lg ${hud.invalid ? 'bg-red-600/95' : 'bg-zinc-900/90 dark:bg-zinc-800/95'}`}
           style={{ left: hud.left, top: hud.top - 6 }}
         >
           {hud.widthCm.toFixed(1)} × {hud.heightCm.toFixed(1)} cm
           {hud.angle ? ` · ${Math.round(hud.angle)}°` : ''}
+          {hud.invalid ? ' · colisão/espaço inválido' : ''}
         </div>
       )}
     </div>
