@@ -4,11 +4,11 @@ import { packImagesByShape } from './shapePacking'
 import { validateLayout } from './layoutValidation'
 import type { GangImage, OccupancyMask, PackedPage } from '@/types'
 
-function image(id: string, widthCm: number, heightCm: number, occupancyMask?: OccupancyMask): GangImage {
+function image(id: string, widthCm: number, heightCm: number, occupancyMask?: OccupancyMask, rotationLocked = false): GangImage {
   return { id, file: new File([''], id + '.png', { type: 'image/png' }), previewUrl: 'blob:' + id,
     naturalWidthPx: widthCm * 100, naturalHeightPx: heightCm * 100, aspectRatio: heightCm / widthCm,
     quantity: 1, widthCm, heightCm, contentXPx: 0, contentYPx: 0,
-    contentWidthPx: widthCm * 100, contentHeightPx: heightCm * 100, occupancyMask }
+    contentWidthPx: widthCm * 100, contentHeightPx: heightCm * 100, occupancyMask, rotationLocked }
 }
 
 const lMask: OccupancyMask = { cols: 10, rows: 10, data: Uint8Array.from({ length: 100 }, (_, i) => i < 10 || i % 10 === 0 ? 1 : 0) }
@@ -47,6 +47,23 @@ describe('encaixe pelo canal alfa', () => {
     const images = [image('solid', 10, 10), image('small', 3, 3)]
     const baseline = packImages(images, 20, 10, 0.3)
     expect(packImagesByShape(images, baseline.pages, 10, 20, 0.3)).toBe(baseline.pages)
+  })
+
+  it('respeita bloqueio de rotação por arte', () => {
+    const locked = image('locked', 8, 3, lMask, true)
+    const baseline = packImages([locked], 20, 10, 0.3)
+    const pages = packImagesByShape([locked], baseline.pages, 10, 20, 0.3)
+    expect(pages[0].items[0].angle).toBe(0)
+  })
+
+  it('bloqueia validação quando falta cópia ou existe giro livre', () => {
+    const source = image('copies', 4, 4)
+    source.quantity = 2
+    const baseline = packImages([source], 20, 10, 0.3)
+    const oneCopy: PackedPage = { ...baseline.pages[0], items: baseline.pages[0].items.slice(0, 1) }
+    expect(validateLayout([oneCopy], 10, 20, 0.3, [source]).some((issue) => issue.type === 'missing-copy')).toBe(true)
+    oneCopy.items[0].angle = 45
+    expect(validateLayout([oneCopy], 10, 20, 0.3, [source]).some((issue) => issue.type === 'invalid-transform')).toBe(true)
   })
 
   it('valida o contorno após giro de 90° sem tratar pixels brancos como vazio', () => {
