@@ -3,7 +3,7 @@ import { EXPORT_END_MARGIN_CM } from './constants'
 import { planExport } from './exportPlan'
 import { rotatedAabbCm } from './geometry'
 import { validateLayout } from './layoutValidation'
-import type { PackedPage, PlacedItem } from '@/types'
+import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 function exportedHeightCm(page: PackedPage, maxHeightCm: number): number {
   return Math.min(maxHeightCm, Math.max(0.1, page.usedHeightCm + EXPORT_END_MARGIN_CM))
@@ -107,11 +107,12 @@ export async function downloadGangSheets(
   pages: PackedPage[],
   canvasWidthCm: number,
   maxHeightCm: number,
-  itemGapCm: number
+  itemGapCm: number,
+  images?: GangImage[]
 ) {
   const nonEmptyPages = pages.filter((page) => page.items.length > 0)
   if (nonEmptyPages.length === 0) return
-  const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm)
+  const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm, images)
   if (issues.length > 0) throw new Error(`${issues[0].message} Ajuste a arte ou clique em Re-empacotar antes de baixar.`)
   nonEmptyPages.forEach((page) => planExport(page, canvasWidthCm, exportedHeightCm(page, maxHeightCm)))
 
