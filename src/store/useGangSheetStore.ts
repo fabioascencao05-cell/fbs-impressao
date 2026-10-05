@@ -3,6 +3,7 @@ import { proportionatePatch } from '@/lib/exportPlan'
 import { packImages } from '@/lib/binPacking'
 import { rotatedAabbCm } from '@/lib/geometry'
 import { computeContentBox } from '@/lib/trimImage'
+import { readOccupancyMask } from '@/lib/shapeMask'
 import { defaultPrintWidthCm } from '@/lib/printQuality'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
@@ -23,6 +24,8 @@ interface GangSheetState {
   pages: PackedPage[]
   unplacedImages: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
   packingStrategy: string | null
+  packingProgress: { done: number; total: number } | null
+  packingComparison: { before: number; after: number } | null
   zoom: number
   sheetBackgroundColor: string
   costPerCm2: number
@@ -34,7 +37,8 @@ interface GangSheetState {
   setMaxHeightCm: (heightCm: number) => void
   setCanvasWidthCm: (widthCm: number) => void
   setItemGapCm: (gapCm: number) => void
-  generateLayout: () => void
+  generateLayout: () => Promise<void>
+  cancelPacking: () => void
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
   duplicatePlacedItem: (pageIndex: number, itemId: string) => void
@@ -67,7 +71,18 @@ const clearedLayout = () => ({
   pages: [] as PackedPage[],
   unplacedImages: [] as GangSheetState['unplacedImages'],
   packingStrategy: null,
+  packingComparison: null,
 })
+
+let activeWorker: Worker | null = null
+let activeReject: ((error: Error) => void) | null = null
+function stopWorker() {
+  activeWorker?.terminate()
+  activeWorker = null
+  const reject = activeReject
+  activeReject = null
+  reject?.(new Error('Otimização cancelada.'))
+}
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   images: [],
@@ -77,6 +92,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pages: [],
   unplacedImages: [],
   packingStrategy: null,
+  packingProgress: null,
+  packingComparison: null,
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
   costPerCm2: 0,
@@ -93,6 +110,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         accepted.slice(start, start + 4).map(async (file): Promise<GangImage | null> => {
           try {
             const box = await computeContentBox(file)
+            if (box.empty) { skipped++; return null }
+            const occupancyMask = await readOccupancyMask(file, box)
             const aspectRatio = box.heightPx / box.widthPx
             const widthCm = defaultPrintWidthCm(box.widthPx)
             const image: GangImage = {
@@ -109,6 +128,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
               contentYPx: box.yPx,
               contentWidthPx: box.widthPx,
               contentHeightPx: box.heightPx,
+              occupancyMask: occupancyMask ?? undefined,
             }
             return image
           } catch {
@@ -120,7 +140,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       newImages.push(...batch.filter((image): image is GangImage => image !== null))
     }
 
-    set((state) => ({ images: [...state.images, ...newImages], ...clearedLayout() }))
+    stopWorker()
+    set((state) => ({ images: [...state.images, ...newImages], packingProgress: null, ...clearedLayout() }))
     return { added: newImages.length, skipped }
   },
 
@@ -140,6 +161,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         pages,
         unplacedImages: state.unplacedImages.filter((it) => it.sourceImageId !== id),
         packingStrategy: null,
+        packingComparison: null,
       }
     })
   },
@@ -177,10 +199,40 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   generateLayout: () => {
+    stopWorker()
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const result = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
-    set({ pages: result.pages, unplacedImages: result.unplaced, packingStrategy: result.strategy })
+    set({ packingProgress: { done: 0, total: 1 } })
+    return new Promise<void>((resolve, reject) => {
+      const worker = new Worker(new URL('../lib/packing.worker.ts', import.meta.url), { type: 'module' })
+      activeWorker = worker
+      activeReject = reject
+      worker.onmessage = (event: MessageEvent<{ type: string; done?: number; total?: number; result?: ReturnType<typeof packImages>; baselineLength?: number; message?: string }>) => {
+        if (worker !== activeWorker) return
+        if (event.data.type === 'progress') {
+          set({ packingProgress: { done: event.data.done ?? 0, total: event.data.total ?? 1 } })
+          return
+        }
+        activeReject = null
+        stopWorker()
+        if (event.data.type === 'error' || !event.data.result) {
+          set({ packingProgress: null })
+          reject(new Error(event.data.message ?? 'Falha ao otimizar.'))
+          return
+        }
+        const current = get()
+        if (current.images === images && current.maxHeightCm === maxHeightCm && current.canvasWidthCm === canvasWidthCm && current.itemGapCm === itemGapCm) {
+          const result = event.data.result
+          set({ pages: result.pages, unplacedImages: result.unplaced, packingStrategy: result.strategy,
+            packingComparison: { before: event.data.baselineLength ?? 0, after: result.pages.reduce((sum, page) => sum + Math.min(maxHeightCm, Math.max(0.1, page.usedHeightCm + 0.1)), 0) }, packingProgress: null })
+        } else set({ packingProgress: null })
+        resolve()
+      }
+      worker.onerror = (event) => { if (worker === activeWorker) { activeReject = null; stopWorker(); set({ packingProgress: null }); reject(new Error(event.message || 'Falha ao otimizar.')) } }
+      worker.postMessage({ images, maxHeightCm, canvasWidthCm, itemGapCm })
+    })
   },
+
+  cancelPacking: () => { stopWorker(); set({ packingProgress: null }) },
 
   updatePlacedItem: (pageIndex, itemId, patch) => {
     set((state) => ({
@@ -190,6 +242,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
+      packingComparison: null,
     }))
   },
 
@@ -201,6 +254,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
+      packingComparison: null,
     }))
   },
 
@@ -220,6 +274,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
+      packingComparison: null,
     }))
   },
 
@@ -228,6 +283,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       pages: state.pages
         .filter((page) => page.index !== pageIndex)
         .map((page, index) => ({ ...page, index })),
+      packingComparison: null,
     }))
   },
 
@@ -238,9 +294,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   setCostPerCm2: (cost) => set((state) => ({ costPerCm2: finiteAtLeast(cost, 0, state.costPerCm2) })),
 
   reset: () => {
+    stopWorker()
     set((state) => {
       state.images.forEach((img) => URL.revokeObjectURL(img.previewUrl))
-      return { images: [], pages: [], unplacedImages: [], packingStrategy: null }
+      return { images: [], pages: [], unplacedImages: [], packingStrategy: null, packingProgress: null, packingComparison: null }
     })
   },
 }))

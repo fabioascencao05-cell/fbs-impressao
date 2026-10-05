@@ -31,6 +31,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const pages = useGangSheetStore((s) => s.pages)
   const unplacedImages = useGangSheetStore((s) => s.unplacedImages)
   const packingStrategy = useGangSheetStore((s) => s.packingStrategy)
+  const packingProgress = useGangSheetStore((s) => s.packingProgress)
+  const packingComparison = useGangSheetStore((s) => s.packingComparison)
+  const cancelPacking = useGangSheetStore((s) => s.cancelPacking)
   const reset = useGangSheetStore((s) => s.reset)
   const [isExporting, setIsExporting] = useState(false)
 
@@ -48,8 +51,12 @@ export default function Sidebar({ onClose }: SidebarProps) {
     }
   }, [canvasWidthCm, maxHeightCm, pages])
 
-  const handleGenerateLayout = () => {
-    generateLayout()
+  const handleGenerateLayout = async () => {
+    try { await generateLayout() } catch (error) {
+      if (error instanceof Error && error.message === 'Otimização cancelada.') return
+      toast({ variant: 'destructive', title: 'Falha ao otimizar', description: error instanceof Error ? error.message : 'Erro desconhecido.' })
+      return
+    }
     const skipped = useGangSheetStore.getState().unplacedImages
     if (skipped.length > 0) {
       toast({
@@ -148,7 +155,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
+              <Label htmlFor="item-gap" className="truncate" title="Distância mínima entre contornos impressos (cm)">
                 Espaço (cm)
               </Label>
               <Input
@@ -193,6 +200,12 @@ export default function Sidebar({ onClose }: SidebarProps) {
             <span>{layoutStats.filmHeight.toFixed(1)} cm de filme</span>
           </div>
           {packingStrategy && <p className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground"><Sparkles className="h-3 w-3" /> Encaixe: {packingStrategy}</p>}
+          {packingComparison && <p className="mt-1 text-[10px] text-muted-foreground">
+            Antes: {packingComparison.before.toFixed(1)} cm · Agora: {packingComparison.after.toFixed(1)} cm ·{' '}
+            {packingComparison.before > packingComparison.after + 0.001
+              ? `Economia: ${(packingComparison.before - packingComparison.after).toFixed(1)} cm (${((1 - packingComparison.after / packingComparison.before) * 100).toFixed(1)}%)`
+              : 'Sem economia adicional para estas artes.'}
+          </p>}
         </div>
       )}
 
@@ -247,19 +260,20 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
         <Button
           className="glow-primary w-full"
-          disabled={images.length === 0}
+          disabled={images.length === 0 || !!packingProgress}
           onClick={handleGenerateLayout}
         >
           <LayoutGrid className="h-4 w-4" />
           Otimizar encaixe
         </Button>
+        {packingProgress && <div className="flex items-center justify-between gap-2 text-xs" role="status"><span>Otimizando {packingProgress.done}/{packingProgress.total}...</span><Button type="button" variant="ghost" size="sm" onClick={cancelPacking}>Cancelar</Button></div>}
         <p className="text-center text-[11px] text-muted-foreground">
-          Testa posições e giros de 90° para economizar filme, mantendo as medidas e o espaço de corte.
+          Aproveita áreas transparentes externas com giros de 90°, mantendo as medidas e o espaço de corte.
         </p>
         <Button
           className="w-full"
           variant="secondary"
-          disabled={!hasLayout || isExporting || unplacedImages.length > 0}
+          disabled={!hasLayout || isExporting || !!packingProgress || unplacedImages.length > 0}
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />

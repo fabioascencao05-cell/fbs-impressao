@@ -1,4 +1,5 @@
 import { rotatedAabbCm } from './geometry'
+import { CELL_CM, clearanceOffsets, forEachSheetCell, shapeFor } from './shapeMask'
 import type { PackedPage, PlacedItem } from '@/types'
 
 const EPSILON = 0.0001
@@ -15,57 +16,85 @@ function itemBounds(item: PlacedItem) {
   return { left: item.xCm, top: item.yCm, right: item.xCm + box.wCm, bottom: item.yCm + box.hCm }
 }
 
-function overlaps(a: ReturnType<typeof itemBounds>, b: ReturnType<typeof itemBounds>): boolean {
-  return a.left < b.right - EPSILON && a.right > b.left + EPSILON && a.top < b.bottom - EPSILON && a.bottom > b.top + EPSILON
+function boundsDistance(a: ReturnType<typeof itemBounds>, b: ReturnType<typeof itemBounds>) {
+  return Math.hypot(Math.max(0, a.left - b.right, b.left - a.right), Math.max(0, a.top - b.bottom, b.top - a.bottom))
 }
 
-function distanceBetween(a: ReturnType<typeof itemBounds>, b: ReturnType<typeof itemBounds>): number {
-  const horizontal = Math.max(0, a.left - b.right, b.left - a.right)
-  const vertical = Math.max(0, a.top - b.bottom, b.top - a.bottom)
-  return Math.hypot(horizontal, vertical)
+function safelySeparated(a: ReturnType<typeof itemBounds>, b: ReturnType<typeof itemBounds>, gapCm: number) {
+  if (gapCm > 0) return boundsDistance(a, b) >= gapCm - EPSILON
+  return a.right <= b.left + EPSILON || b.right <= a.left + EPSILON || a.bottom <= b.top + EPSILON || b.bottom <= a.top + EPSILON
 }
 
-/**
- * Manual editing is useful, but exporting overlapping or off-sheet artwork
- * wastes a DTF print. Validate the final layout immediately before export.
- */
-export function validateLayout(
-  pages: PackedPage[],
-  canvasWidthCm: number,
-  maxHeightCm: number,
-  itemGapCm = 0
-): LayoutIssue[] {
+/** Independent final check for auto packing and manual editing. Conservative
+ * sheet cells include every non-zero alpha source cell. White is ink; enclosed
+ * transparent counters are already filled in the source mask. */
+export function validateLayout(pages: PackedPage[], canvasWidthCm: number, maxHeightCm: number, itemGapCm = 0): LayoutIssue[] {
   const issues: LayoutIssue[] = []
+  if (![canvasWidthCm, maxHeightCm, itemGapCm].every(Number.isFinite) || canvasWidthCm <= 0 || maxHeightCm <= 0 || itemGapCm < 0) {
+    return [{ type: 'outside-sheet', pageIndex: 0, itemIds: [], message: 'Medidas da folha ou espaçamento inválidos.' }]
+  }
+  const neighbors = clearanceOffsets(itemGapCm)
   for (const page of pages) {
-    const bounds = page.items.map((item) => ({ item, bounds: itemBounds(item) }))
-    for (const { item, bounds: rect } of bounds) {
-      if (rect.left < -EPSILON || rect.top < -EPSILON || rect.right > canvasWidthCm + EPSILON || rect.bottom > maxHeightCm + EPSILON) {
-        issues.push({
-          type: 'outside-sheet',
-          pageIndex: page.index,
-          itemIds: [item.id],
-          message: `Uma arte da página ${page.index + 1} está fora da área imprimível.`,
-        })
-      }
-    }
-    for (let first = 0; first < bounds.length; first++) {
-      for (let second = first + 1; second < bounds.length; second++) {
-        if (overlaps(bounds[first].bounds, bounds[second].bounds)) {
-          issues.push({
-            type: 'overlap',
-            pageIndex: page.index,
-            itemIds: [bounds[first].item.id, bounds[second].item.id],
-            message: `Duas artes se sobrepõem na página ${page.index + 1}.`,
-          })
-        } else if (itemGapCm > 0 && distanceBetween(bounds[first].bounds, bounds[second].bounds) < itemGapCm - EPSILON) {
-          issues.push({
-            type: 'insufficient-gap',
-            pageIndex: page.index,
-            itemIds: [bounds[first].item.id, bounds[second].item.id],
-            message: `Duas artes da página ${page.index + 1} estão com menos de ${itemGapCm.toFixed(1)} cm de espaço.`,
-          })
+    if (page.items.every((item) => !item.occupancyMask)) {
+      for (const [index, item] of page.items.entries()) {
+        const a = itemBounds(item)
+        if (![a.left, a.top, a.right, a.bottom].every(Number.isFinite) ||
+          a.left < -EPSILON || a.top < -EPSILON || a.right > canvasWidthCm + EPSILON || a.bottom > maxHeightCm + EPSILON) {
+          issues.push({ type: 'outside-sheet', pageIndex: page.index, itemIds: [item.id], message: `Uma arte da página ${page.index + 1} está fora da área imprimível.` })
+        }
+        for (const other of page.items.slice(0, index)) {
+          const b = itemBounds(other)
+          const overlap = a.left < b.right - EPSILON && b.left < a.right - EPSILON && a.top < b.bottom - EPSILON && b.top < a.bottom - EPSILON
+          if (overlap || (itemGapCm > 0 && boundsDistance(a, b) < itemGapCm - EPSILON)) {
+            issues.push({ type: overlap ? 'overlap' : 'insufficient-gap', pageIndex: page.index,
+              itemIds: [other.id, item.id], message: overlap ? `Duas artes se sobrepõem na página ${page.index + 1}.` : `Duas artes da página ${page.index + 1} estão com menos de ${itemGapCm.toFixed(1)} cm de espaço.` })
+          }
         }
       }
+      continue
+    }
+    const cols = Math.ceil(canvasWidthCm / CELL_CM), rows = Math.ceil(maxHeightCm / CELL_CM)
+    const owner = new Int32Array(cols * rows)
+    const blocked = new Int32Array(cols * rows)
+    for (const [index, item] of page.items.entries()) {
+      const bounds = itemBounds(item)
+      if (![bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite) ||
+        bounds.left < -EPSILON || bounds.top < -EPSILON || bounds.right > canvasWidthCm + EPSILON || bounds.bottom > maxHeightCm + EPSILON) {
+        issues.push({ type: 'outside-sheet', pageIndex: page.index, itemIds: [item.id], message: `Uma arte da página ${page.index + 1} está fora da área imprimível.` })
+        continue
+      }
+      const shape = shapeFor(item.occupancyMask, item.widthCm, item.heightCm, item.angle)
+      let conflict = 0
+      forEachSheetCell(item, shape, (x, y) => {
+        if (x < 0 || y < 0 || x >= cols || y >= rows) return
+        const at = y * cols + x
+        if (owner[at]) {
+          const other = page.items[owner[at] - 1]
+          if (safelySeparated(bounds, itemBounds(other), itemGapCm)) return
+          conflict = owner[at]; return true
+        }
+        if (blocked[at]) {
+          const other = page.items[blocked[at] - 1]
+          if (safelySeparated(bounds, itemBounds(other), itemGapCm)) return
+          conflict = -blocked[at]; return true
+        }
+      })
+      if (conflict) {
+        const overlap = conflict > 0
+        const other = page.items[Math.abs(conflict) - 1]
+        issues.push({ type: overlap ? 'overlap' : 'insufficient-gap', pageIndex: page.index,
+          itemIds: [other.id, item.id], message: overlap ? `Duas artes se sobrepõem na página ${page.index + 1}.` : `Duas artes da página ${page.index + 1} estão com menos de ${itemGapCm.toFixed(1)} cm de espaço.` })
+        continue
+      }
+      forEachSheetCell(item, shape, (x, y) => {
+        if (x < 0 || y < 0 || x >= cols || y >= rows) return
+        const at = y * cols + x
+        owner[at] = index + 1
+        for (const [dx, dy] of neighbors) {
+          const gx = x + dx, gy = y + dy
+          if (gx >= 0 && gy >= 0 && gx < cols && gy < rows) blocked[gy * cols + gx] = index + 1
+        }
+      })
     }
   }
   return issues

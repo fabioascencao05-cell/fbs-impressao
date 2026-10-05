@@ -68,7 +68,7 @@ export default function CanvasWorkspace() {
   )
 
   const handleRegenerate = useCallback(() => {
-    generateLayout()
+    void generateLayout().catch(() => {})
     setSelection(null)
   }, [generateLayout])
 

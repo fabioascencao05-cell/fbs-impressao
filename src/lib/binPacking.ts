@@ -13,6 +13,7 @@ interface PackableUnit {
   contentHeightPx: number
   naturalWidthPx: number
   naturalHeightPx: number
+  occupancyMask?: GangImage['occupancyMask']
 }
 
 interface FreeRect {
@@ -65,6 +66,7 @@ function expandQueue(images: GangImage[]): PackableUnit[] {
         contentHeightPx: image.contentHeightPx,
         naturalWidthPx: image.naturalWidthPx,
         naturalHeightPx: image.naturalHeightPx,
+        occupancyMask: image.occupancyMask,
       })
     }
   }
@@ -355,6 +357,7 @@ function packWithStrategy(
       contentHeightPx: unit.contentHeightPx,
       naturalWidthPx: unit.naturalWidthPx,
       naturalHeightPx: unit.naturalHeightPx,
+      occupancyMask: unit.occupancyMask,
     })
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)
     bucket.usedHeightCm = Math.max(bucket.usedHeightCm, fit.rect.y + box.hCm)
@@ -542,6 +545,7 @@ function packBestNext(
       contentHeightPx: unit.contentHeightPx,
       naturalWidthPx: unit.naturalWidthPx,
       naturalHeightPx: unit.naturalHeightPx,
+      occupancyMask: unit.occupancyMask,
     })
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)
     bucket.usedHeightCm = Math.max(bucket.usedHeightCm, fit.rect.y + box.hCm)

@@ -5,6 +5,7 @@ export interface ContentBox {
   heightPx: number
   naturalWidthPx: number
   naturalHeightPx: number
+  empty?: boolean
 }
 
 /** Scan original-resolution tiles so fine alpha lines cannot vanish in a thumbnail. */
@@ -37,7 +38,7 @@ export function computeContentBox(file: File): Promise<ContentBox> {
           }
           await new Promise((done) => setTimeout(done, 0))
         }
-        resolve(maxX < minX ? full : { ...full, xPx: minX, yPx: minY, widthPx: maxX - minX + 1, heightPx: maxY - minY + 1 })
+        resolve(maxX < minX ? { ...full, empty: true } : { ...full, xPx: minX, yPx: minY, widthPx: maxX - minX + 1, heightPx: maxY - minY + 1 })
       } catch {
         resolve(full) // Retain all pixels when scanning fails; never guess a crop.
       } finally {

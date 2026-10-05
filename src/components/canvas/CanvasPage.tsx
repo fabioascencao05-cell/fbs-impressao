@@ -64,6 +64,7 @@ export default function CanvasPage({
       uniformScaling: true, // corner-drag always keeps aspect ratio
       uniScaleKey: undefined, // no modifier key ever unlocks free distortion
       preserveObjectStacking: true,
+      perPixelTargetFind: true,
       backgroundColor: 'transparent',
     })
     fabricRef.current = canvas
@@ -149,6 +150,7 @@ export default function CanvasPage({
     const onModified = (e: { target?: fabric.FabricObject }) => {
       const obj = e.target as TaggedImage | undefined
       if (!obj?.itemId) return
+      obj.set('angle', Math.round((obj.angle ?? 0) / 90) * 90)
       clampToSheet(obj)
       const rect = contentRectCm(obj)
       if (!rect) return
@@ -195,6 +197,8 @@ export default function CanvasPage({
             left: (item.xCm + box.wCm / 2) * pxPerCm,
             top: (item.yCm + box.hCm / 2) * pxPerCm,
             angle: item.angle ?? 0,
+            snapAngle: 90,
+            snapThreshold: 45,
             scaleX: scale,
             scaleY: scale,
             selectable: true,

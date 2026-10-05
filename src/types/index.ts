@@ -1,3 +1,9 @@
+export interface OccupancyMask {
+  cols: number
+  rows: number
+  data: Uint8Array
+}
+
 export interface GangImage {
   id: string
   file: File
@@ -13,6 +19,7 @@ export interface GangImage {
   contentYPx: number
   contentWidthPx: number
   contentHeightPx: number
+  occupancyMask?: OccupancyMask
 }
 
 export interface PlacedItem {
@@ -37,6 +44,7 @@ export interface PlacedItem {
   contentHeightPx: number
   naturalWidthPx: number
   naturalHeightPx: number
+  occupancyMask?: OccupancyMask
 }
 
 export interface PackedPage {
