@@ -15,13 +15,16 @@ MVP de um SaaS para montagem automática de "gang sheets" para impressão DTF.
 
 - A largura da folha é fixa em **57cm**. A altura máxima é definida pelo usuário.
 - Cada imagem enviada (PNG, JPG, WebP ou SVG) entra numa fila com quantidade e largura (cm) editáveis; a altura é calculada automaticamente mantendo a proporção original.
-- "Gerar Layout" roda um algoritmo MaxRects (Best Short Side Fit) que:
-  - Expande cada imagem pela quantidade informada.
-  - Testa posições e rotação de 90° para aproveitar os espaços vazios sem alterar o tamanho da arte.
-  - Mantém o espaçamento de corte entre artes, mas permite que uma arte isolada encoste na borda útil da folha.
-  - Cria automaticamente uma nova página quando a altura máxima é excedida (auto-paginação).
+- "Otimizar encaixe" usa o MaxRects atual como linha de base e, quando há transparência, tenta um nesting irregular determinístico pelo canal alfa:
+  - Todo pixel com alfa maior que zero conta como impresso; branco e semitransparência continuam ocupados.
+  - Margens transparentes e concavidades externas podem compartilhar a mesma região da folha sem separar uma estampa em partes.
+  - Buracos transparentes fechados são reservados por padrão para evitar intercalar outra estampa dentro de letras/logos.
+  - Testa rotações de 0°, 90°, 180° e 270° (ou apenas 0° quando a rotação da arte está bloqueada).
+  - O campo de espaço representa a distância mínima entre contornos impressos; a busca usa grade física conservadora de 1 mm.
+  - O processamento pesado roda em Web Worker, pode ser cancelado e só substitui o MaxRects quando reduz o comprimento total de filme e passa pela validação independente.
+  - Cria automaticamente uma nova página quando a altura máxima é excedida, sem cortar artes entre páginas.
 - "Download DTF" renderiza cada página a **300 DPI reais**, com fundo transparente e metadado de 300 DPI. O PNG usa somente a altura ocupada (mais 1 mm de margem final), evitando filme vazio; múltiplas páginas são entregues em `.zip`.
-- A fila mostra o DPI efetivo de cada arte no tamanho escolhido. Se você aumentar uma arte além da resolução original, o sistema avisa — ele não inventa qualidade nem reduz o arquivo silenciosamente.
+- A largura/altura exibida na fila corresponde à arte visível (caixa dos pixels com alfa > 0), não ao retângulo completo do arquivo. A fila mostra o DPI efetivo de cada arte no tamanho escolhido. Se você aumentar uma arte além da resolução original, o sistema avisa — ele não inventa qualidade nem reduz o arquivo silenciosamente.
 - O Studio permite remover fundo em lote, ampliar imagens para preparo de impressão e vetorizar logos, letras e artes chapadas. A vetorização usa modo **Mais fiel** por padrão, preserva a proporção, remove contornos automáticos que engrossam a arte e permite baixar o resultado em **SVG**. SVGs enviados pelo usuário nunca são rasterizados ou retraçados sem necessidade.
 - O Studio também tem **Halftone**: cria retícula em PNG transparente, com controles de tamanho e espaçamento do ponto, ângulo e intensidade. O modo **1 cor** permite escolher a cor e baixa SVG editável dos pontos quando o arquivo não fica pesado; o modo **CMYK visual** usa quatro telas anguladas para efeito de estampa e exporta PNG RGB a 300 DPI. A separação de tinta e o perfil final devem continuar sendo definidos no RIP.
 
