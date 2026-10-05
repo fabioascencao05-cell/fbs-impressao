@@ -1,11 +1,11 @@
 import { rotatedAabbCm } from './geometry'
 import { CELL_CM, clearanceOffsets, forEachSheetCell, shapeFor } from './shapeMask'
-import type { PackedPage, PlacedItem } from '@/types'
+import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 const EPSILON = 0.0001
 
 export interface LayoutIssue {
-  type: 'outside-sheet' | 'overlap' | 'insufficient-gap'
+  type: 'outside-sheet' | 'overlap' | 'insufficient-gap' | 'invalid-transform' | 'missing-copy'
   pageIndex: number
   itemIds: string[]
   message: string
@@ -28,13 +28,33 @@ function safelySeparated(a: ReturnType<typeof itemBounds>, b: ReturnType<typeof 
 /** Independent final check for auto packing and manual editing. Conservative
  * sheet cells include every non-zero alpha source cell. White is ink; enclosed
  * transparent counters are already filled in the source mask. */
-export function validateLayout(pages: PackedPage[], canvasWidthCm: number, maxHeightCm: number, itemGapCm = 0): LayoutIssue[] {
+export function validateLayout(
+  pages: PackedPage[],
+  canvasWidthCm: number,
+  maxHeightCm: number,
+  itemGapCm = 0,
+  expectedImages?: GangImage[]
+): LayoutIssue[] {
   const issues: LayoutIssue[] = []
   if (![canvasWidthCm, maxHeightCm, itemGapCm].every(Number.isFinite) || canvasWidthCm <= 0 || maxHeightCm <= 0 || itemGapCm < 0) {
     return [{ type: 'outside-sheet', pageIndex: 0, itemIds: [], message: 'Medidas da folha ou espaçamento inválidos.' }]
   }
   const neighbors = clearanceOffsets(itemGapCm)
   for (const page of pages) {
+    for (const item of page.items) {
+      const normalizedAngle = ((item.angle % 360) + 360) % 360
+      const orthogonal = [0, 90, 180, 270].some((angle) => Math.abs(angle - normalizedAngle) < 0.0001)
+      if (![item.xCm, item.yCm, item.widthCm, item.heightCm, item.angle].every(Number.isFinite) ||
+          item.widthCm <= 0 || item.heightCm <= 0 || !orthogonal ||
+          (item.rotationLocked && Math.abs(normalizedAngle) > 0.0001)) {
+        issues.push({
+          type: 'invalid-transform',
+          pageIndex: page.index,
+          itemIds: [item.id],
+          message: `Uma arte da página ${page.index + 1} tem medida, posição ou rotação inválida.`,
+        })
+      }
+    }
     if (page.items.every((item) => !item.occupancyMask)) {
       for (const [index, item] of page.items.entries()) {
         const a = itemBounds(item)
@@ -95,6 +115,22 @@ export function validateLayout(pages: PackedPage[], canvasWidthCm: number, maxHe
           if (gx >= 0 && gy >= 0 && gx < cols && gy < rows) blocked[gy * cols + gx] = index + 1
         }
       })
+    }
+  }
+  if (expectedImages) {
+    const counts = new Map<string, number>()
+    for (const page of pages) for (const item of page.items)
+      counts.set(item.sourceImageId, (counts.get(item.sourceImageId) ?? 0) + 1)
+    for (const image of expectedImages) {
+      const actual = counts.get(image.id) ?? 0
+      if (actual < image.quantity) {
+        issues.push({
+          type: 'missing-copy',
+          pageIndex: 0,
+          itemIds: [],
+          message: `Faltam ${image.quantity - actual} cópia(s) de "${image.file.name}" na montagem.`,
+        })
+      }
     }
   }
   return issues
