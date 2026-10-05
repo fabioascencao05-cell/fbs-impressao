@@ -84,7 +84,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
     }
     setIsExporting(true)
     try {
-      await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm)
+      await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm, images)
       const pageCount = pages.filter((p) => p.items.length > 0).length
       toast({
         title: 'Exportação concluída',
@@ -266,7 +266,18 @@ export default function Sidebar({ onClose }: SidebarProps) {
           <LayoutGrid className="h-4 w-4" />
           Otimizar encaixe
         </Button>
-        {packingProgress && <div className="flex items-center justify-between gap-2 text-xs" role="status"><span>Otimizando {packingProgress.done}/{packingProgress.total}...</span><Button type="button" variant="ghost" size="sm" onClick={cancelPacking}>Cancelar</Button></div>}
+        {packingProgress && (
+          <div className="space-y-1.5" role="status">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span>Otimizando {packingProgress.done}/{packingProgress.total}...</span>
+              <Button type="button" variant="ghost" size="sm" onClick={cancelPacking}>Cancelar</Button>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="h-full bg-primary transition-[width]"
+                style={{ width: `${Math.min(100, Math.round((packingProgress.done / Math.max(1, packingProgress.total)) * 100))}%` }} />
+            </div>
+          </div>
+        )}
         <p className="text-center text-[11px] text-muted-foreground">
           Aproveita áreas transparentes externas com giros de 90°, mantendo as medidas e o espaço de corte.
         </p>
