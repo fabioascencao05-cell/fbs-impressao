@@ -18,7 +18,7 @@ export default function ImageUploadZone() {
           toast({
             variant: 'destructive',
             title: 'Alguns arquivos foram ignorados',
-            description: `${skipped} arquivo(s) com formato não suportado. Aceitos: PNG, JPG, WebP e SVG.`,
+            description: `${skipped} arquivo(s) ignorado(s): formato inválido/não suportado ou imagem totalmente transparente. Aceitos: PNG, JPG, WebP e SVG.`,
           })
         }
         if (added > 0) {
