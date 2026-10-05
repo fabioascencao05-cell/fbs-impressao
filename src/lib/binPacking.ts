@@ -14,6 +14,7 @@ interface PackableUnit {
   naturalWidthPx: number
   naturalHeightPx: number
   occupancyMask?: GangImage['occupancyMask']
+  rotationLocked?: boolean
 }
 
 interface FreeRect {
@@ -67,6 +68,7 @@ function expandQueue(images: GangImage[]): PackableUnit[] {
         naturalWidthPx: image.naturalWidthPx,
         naturalHeightPx: image.naturalHeightPx,
         occupancyMask: image.occupancyMask,
+        rotationLocked: image.rotationLocked,
       })
     }
   }
@@ -229,7 +231,8 @@ function findBestFit(
   height: number,
   itemGapCm: number,
   currentUsedHeightCm: number,
-  strategy: FitStrategy
+  strategy: FitStrategy,
+  allowRotation: boolean
 ): Fit | null {
   let best: Fit | null = null
 
@@ -279,7 +282,7 @@ function findBestFit(
   }
 
   consider(width, height, false)
-  if (Math.abs(width - height) > EPSILON) consider(height, width, true)
+  if (allowRotation && Math.abs(width - height) > EPSILON) consider(height, width, true)
   return best
 }
 
@@ -319,7 +322,7 @@ function packWithStrategy(
     let target: { bucket: PageBucket; fit: Fit } | null = null
 
     for (const bucket of buckets) {
-      const fit = findBestFit(bucket.freeRects, unit.widthCm, unit.heightCm, itemGapCm, bucket.usedHeightCm, fitStrategy)
+      const fit = findBestFit(bucket.freeRects, unit.widthCm, unit.heightCm, itemGapCm, bucket.usedHeightCm, fitStrategy, !unit.rotationLocked)
       if (!fit) continue
       if (!target || compareFit(fit, target.fit) < 0) {
         target = { bucket, fit }
@@ -328,7 +331,7 @@ function packWithStrategy(
 
     if (!target) {
       const bucket = openBucket()
-      const fit = findBestFit(bucket.freeRects, unit.widthCm, unit.heightCm, itemGapCm, bucket.usedHeightCm, fitStrategy)
+      const fit = findBestFit(bucket.freeRects, unit.widthCm, unit.heightCm, itemGapCm, bucket.usedHeightCm, fitStrategy, !unit.rotationLocked)
       if (!fit) {
         buckets.pop()
         unplaced.push({ sourceImageId: unit.sourceImageId, widthCm: unit.widthCm, heightCm: unit.heightCm })
@@ -358,6 +361,7 @@ function packWithStrategy(
       naturalWidthPx: unit.naturalWidthPx,
       naturalHeightPx: unit.naturalHeightPx,
       occupancyMask: unit.occupancyMask,
+      rotationLocked: unit.rotationLocked,
     })
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)
     bucket.usedHeightCm = Math.max(bucket.usedHeightCm, fit.rect.y + box.hCm)
@@ -460,7 +464,8 @@ function packBestNext(
           unit.heightCm,
           itemGapCm,
           bucket.usedHeightCm,
-          fitStrategy
+          fitStrategy,
+          !unit.rotationLocked
         )
         if (!fit) continue
 
@@ -477,7 +482,8 @@ function packBestNext(
         unit.heightCm,
         itemGapCm,
         0,
-        fitStrategy
+        fitStrategy,
+        !unit.rotationLocked
       )
       if (fitOnNewPage) {
         const score = scoreGlobalPlacement(unit, fitOnNewPage, 0, canvasWidthCm, itemGapCm, true)
@@ -509,7 +515,8 @@ function packBestNext(
         unit.heightCm,
         itemGapCm,
         0,
-        fitStrategy
+        fitStrategy,
+        !unit.rotationLocked
       )
       if (!freshFit) {
         buckets.pop()
@@ -546,6 +553,7 @@ function packBestNext(
       naturalWidthPx: unit.naturalWidthPx,
       naturalHeightPx: unit.naturalHeightPx,
       occupancyMask: unit.occupancyMask,
+      rotationLocked: unit.rotationLocked,
     })
     bucket.freeRects = splitFreeRects(bucket.freeRects, used)
     bucket.usedHeightCm = Math.max(bucket.usedHeightCm, fit.rect.y + box.hCm)
