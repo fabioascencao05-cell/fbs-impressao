@@ -10,6 +10,7 @@ import type { GangImage } from '@/types'
 export default function ImageQueueItem({ image }: { image: GangImage }) {
   const updateQuantity = useGangSheetStore((s) => s.updateQuantity)
   const updateWidthCm = useGangSheetStore((s) => s.updateWidthCm)
+  const setRotationLocked = useGangSheetStore((s) => s.setRotationLocked)
   const removeImage = useGangSheetStore((s) => s.removeImage)
   const pages = useGangSheetStore((s) => s.pages)
   const isVector = image.file.type === 'image/svg+xml'
@@ -67,7 +68,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
           </div>
           <div className="min-w-0 space-y-0.5">
             <Label htmlFor={`width-${image.id}`} className="truncate">
-              Largura (cm)
+              Largura visível (cm)
             </Label>
             <Input
               id={`width-${image.id}`}
@@ -80,8 +81,15 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
+          Altura visível: {image.heightCm.toFixed(1)} cm · arquivo {image.naturalWidthPx}×{image.naturalHeightPx}px
         </p>
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          A medida usa a arte visível. Margens transparentes externas não aumentam o tamanho físico.
+        </p>
+        <Button type="button" variant={image.rotationLocked ? 'secondary' : 'outline'} size="sm"
+          className="h-7 w-full text-[10px]" onClick={() => setRotationLocked(image.id, !image.rotationLocked)}>
+          {image.rotationLocked ? 'Rotação bloqueada em 0°' : 'Rotação automática 0/90/180/270°'}
+        </Button>
         <p
           className={`text-[11px] ${isPrintReady ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
           title={qualityHelp}
