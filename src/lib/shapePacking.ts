@@ -38,7 +38,7 @@ function stamp(page: GridPage, shape: Shape, x: number, y: number, neighbors: Ar
 /** Search real occupied pixels; every piece stays an indivisible image. */
 function findFit(page: GridPage, item: PlacedItem, widthCm: number, maxHeightCm: number, budget: { left: number }): Fit | null {
   let best: Fit | null = null
-  for (const angle of [0, 90, 180, 270]) {
+  for (const angle of item.rotationLocked ? [0] : [0, 90, 180, 270]) {
     const box = rotatedAabbCm(item.widthCm, item.heightCm, angle)
     const maxX = Math.floor((widthCm - box.wCm + 1e-8) / CELL_CM)
     const maxY = Math.floor((maxHeightCm - box.hCm + 1e-8) / CELL_CM)
