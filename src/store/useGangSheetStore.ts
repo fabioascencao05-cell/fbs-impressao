@@ -34,6 +34,7 @@ interface GangSheetState {
   removeImage: (id: string) => void
   updateQuantity: (id: string, quantity: number) => void
   updateWidthCm: (id: string, widthCm: number) => void
+  setRotationLocked: (id: string, locked: boolean) => void
   setMaxHeightCm: (heightCm: number) => void
   setCanvasWidthCm: (widthCm: number) => void
   setItemGapCm: (gapCm: number) => void
@@ -129,6 +130,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
               contentWidthPx: box.widthPx,
               contentHeightPx: box.heightPx,
               occupancyMask: occupancyMask ?? undefined,
+              rotationLocked: false,
             }
             return image
           } catch {
@@ -182,6 +184,13 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
           ? { ...img, widthCm, heightCm: widthCm * img.aspectRatio }
           : img
       ),
+      ...clearedLayout(),
+    }))
+  },
+
+  setRotationLocked: (id, locked) => {
+    set((state) => ({
+      images: state.images.map((img) => img.id === id ? { ...img, rotationLocked: locked } : img),
       ...clearedLayout(),
     }))
   },
