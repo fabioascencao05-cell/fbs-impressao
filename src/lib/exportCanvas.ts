@@ -3,6 +3,7 @@ import { EXPORT_END_MARGIN_CM } from './constants'
 import { planExport } from './exportPlan'
 import { rotatedAabbCm } from './geometry'
 import { validateLayout } from './layoutValidation'
+import { validateFinalRasterLayout } from './finalRasterValidation'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
 function exportedHeightCm(page: PackedPage, maxHeightCm: number): number {
@@ -115,6 +116,9 @@ export async function downloadGangSheets(
   const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm, images)
   if (issues.length > 0) throw new Error(`${issues[0].message} Ajuste a arte ou clique em Re-empacotar antes de baixar.`)
   nonEmptyPages.forEach((page) => planExport(page, canvasWidthCm, exportedHeightCm(page, maxHeightCm)))
+  const finalRasterIssues = await validateFinalRasterLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm)
+  if (finalRasterIssues.length > 0)
+    throw new Error(`${finalRasterIssues[0].message} Ajuste a arte ou clique em Re-empacotar antes de baixar.`)
 
   if (nonEmptyPages.length === 1) {
     const page = nonEmptyPages[0]
