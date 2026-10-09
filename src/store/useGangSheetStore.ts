@@ -17,6 +17,8 @@ const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/
 
 interface GangSheetState {
   images: GangImage[]
+  trimExportHeight: boolean
+  setTrimExportHeight: (trim: boolean) => void
   maxHeightCm: number
   canvasWidthCm: number
   itemGapCm: number
@@ -71,6 +73,8 @@ const clearedLayout = () => ({
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   images: [],
+  trimExportHeight: false,
+  setTrimExportHeight: (trim) => set({ trimExportHeight: trim }),
   maxHeightCm: DEFAULT_MAX_HEIGHT_CM,
   canvasWidthCm: DEFAULT_CANVAS_WIDTH_CM,
   itemGapCm: DEFAULT_ITEM_GAP_CM,

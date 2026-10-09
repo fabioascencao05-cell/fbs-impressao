@@ -89,4 +89,12 @@ describe('validade do layout DTF', () => {
 
     expect(useGangSheetStore.getState().pages[0].usedHeightCm).toBe(10)
   })
+
+  it('alterar o corte do fim do filme não reempacota nem muda artes ajustadas', () => {
+    const pages = [{ index: 0, items: [placed('manual', 'art', 30)], usedHeightCm: 40 }]
+    useGangSheetStore.setState({ pages, trimExportHeight: false })
+    useGangSheetStore.getState().setTrimExportHeight(true)
+    expect(useGangSheetStore.getState().pages).toBe(pages)
+    expect(useGangSheetStore.getState().trimExportHeight).toBe(true)
+  })
 })

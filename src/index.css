@@ -303,3 +303,13 @@
     transition: none;
   }
 }
+
+/* A single visible scroll rail for upload, settings and the entire art queue. */
+.fbs-sidebar-scroll {
+  scrollbar-width: auto;
+  scrollbar-color: hsl(var(--primary) / 0.65) hsl(var(--muted));
+  scrollbar-gutter: stable;
+}
+.fbs-sidebar-scroll::-webkit-scrollbar { width: 10px; }
+.fbs-sidebar-scroll::-webkit-scrollbar-thumb { background: hsl(var(--primary) / 0.65); }
+.fbs-sidebar-scroll::-webkit-scrollbar-track { background: hsl(var(--muted)); }

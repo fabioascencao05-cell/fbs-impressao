@@ -6,7 +6,7 @@ MVP de um SaaS para montagem automática de "gang sheets" para impressão DTF.
 
 - React 18 + Vite + TypeScript
 - Tailwind CSS + componentes no estilo shadcn/ui (Radix UI + CVA)
-- Fabric.js para renderização do canvas (preview e exportação)
+- Fabric.js para a prévia; Canvas 2D e PNG em faixas para exportação
 - Zustand para state management
 - Supabase Auth (`@supabase/auth-ui-react`) para login/cadastro
 - JSZip para agrupar múltiplas páginas exportadas
@@ -20,7 +20,9 @@ MVP de um SaaS para montagem automática de "gang sheets" para impressão DTF.
   - Testa posições e rotação de 90° para aproveitar os espaços vazios sem alterar o tamanho da arte.
   - Mantém o espaçamento de corte entre artes, mas permite que uma arte isolada encoste na borda útil da folha.
   - Cria automaticamente uma nova página quando a altura máxima é excedida (auto-paginação).
-- "Download DTF" renderiza cada página a **300 DPI reais**, com fundo transparente e metadado de 300 DPI. O PNG usa somente a altura ocupada (mais 1 mm de margem final), evitando filme vazio; múltiplas páginas são entregues em `.zip`.
+- "Download DTF" preserva a montagem atual (tamanhos, giros, cores, transparência e posições), com saída fixa a **300 DPI** e metadados físicos no PNG. O comprimento configurado é respeitado; o corte para a altura ocupada é opcional. A exportação renderiza em faixas de memória limitada e as comprime em **um PNG contínuo por página**, sem cortar as artes ou fragmentar folhas longas. Múltiplas páginas já existentes na montagem são entregues em `.zip`. Pouco espaço de corte ou caixas sobrepostas geram aviso, sem forçar um reempacotamento; artes fora da folha são bloqueadas para evitar cortes.
+- O MaxRects prioriza menos páginas antes do comprimento ocupado e reúne páginas curtas dos ensaios que caibam no comprimento solicitado. As mesmas estratégias de encaixe, proporções e espaçamento continuam sendo usadas.
+- A barra lateral tem uma única área de rolagem visível para envio, configurações e fila, mantendo os botões de otimização/download acessíveis.
 - A fila mostra o DPI efetivo de cada arte no tamanho escolhido. Se você aumentar uma arte além da resolução original, o sistema avisa — ele não inventa qualidade nem reduz o arquivo silenciosamente.
 - O Studio permite remover fundo em lote, ampliar imagens para preparo de impressão e vetorizar logos, letras e artes chapadas. A vetorização usa modo **Mais fiel** por padrão, preserva a proporção, remove contornos automáticos que engrossam a arte e permite baixar o resultado em **SVG**. SVGs enviados pelo usuário nunca são rasterizados ou retraçados sem necessidade.
 - O Studio também tem **Halftone**: cria retícula em PNG transparente, com controles de tamanho e espaçamento do ponto, ângulo e intensidade. O modo **1 cor** permite escolher a cor e baixa SVG editável dos pontos quando o arquivo não fica pesado; o modo **CMYK visual** usa quatro telas anguladas para efeito de estampa e exporta PNG RGB a 300 DPI. A separação de tinta e o perfil final devem continuar sendo definidos no RIP.

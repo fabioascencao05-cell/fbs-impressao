@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import ImageUploadZone from './ImageUploadZone'
 import ImageQueueItem from './ImageQueueItem'
@@ -11,13 +10,16 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { downloadGangSheets } from '@/lib/exportCanvas'
 import { toast } from '@/hooks/use-toast'
 import { useMemo, useState } from 'react'
-import { EXPORT_END_MARGIN_CM } from '@/lib/constants'
+import { sheetHeightCm } from '@/lib/exportPlan'
+import { validateLayout } from '@/lib/layoutValidation'
 
 interface SidebarProps {
   onClose?: () => void
 }
 
 export default function Sidebar({ onClose }: SidebarProps) {
+  const trimExportHeight = useGangSheetStore((s) => s.trimExportHeight)
+  const setTrimExportHeight = useGangSheetStore((s) => s.setTrimExportHeight)
   const images = useGangSheetStore((s) => s.images)
   const maxHeightCm = useGangSheetStore((s) => s.maxHeightCm)
   const setMaxHeightCm = useGangSheetStore((s) => s.setMaxHeightCm)
@@ -33,20 +35,23 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const packingStrategy = useGangSheetStore((s) => s.packingStrategy)
   const reset = useGangSheetStore((s) => s.reset)
   const [isExporting, setIsExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const layoutIssues = useMemo(() => validateLayout(pages, canvasWidthCm, maxHeightCm, itemGapCm),
+    [pages, canvasWidthCm, maxHeightCm, itemGapCm])
 
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
   const layoutStats = useMemo(() => {
     const visible = pages.filter((page) => page.items.length > 0)
     const artArea = visible.flatMap((page) => page.items).reduce((sum, item) => sum + item.widthCm * item.heightCm, 0)
-    const filmHeight = visible.reduce((sum, page) => sum + Math.min(maxHeightCm, page.usedHeightCm + EXPORT_END_MARGIN_CM), 0)
+    const filmHeight = visible.reduce((sum, page) => sum + sheetHeightCm(page, maxHeightCm, trimExportHeight), 0)
     const filmArea = canvasWidthCm * filmHeight
     return {
       pages: visible.length,
       filmHeight,
       efficiency: filmArea > 0 ? Math.min(100, (artArea / filmArea) * 100) : 0,
     }
-  }, [canvasWidthCm, maxHeightCm, pages])
+  }, [canvasWidthCm, maxHeightCm, pages, trimExportHeight])
 
   const handleGenerateLayout = () => {
     generateLayout()
@@ -76,15 +81,17 @@ export default function Sidebar({ onClose }: SidebarProps) {
       return
     }
     setIsExporting(true)
+    setExportProgress(0)
     try {
-      await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm)
+      const warnings = await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm, trimExportHeight,
+        (done, total) => setExportProgress(Math.round(done / total * 100)))
       const pageCount = pages.filter((p) => p.items.length > 0).length
       toast({
-        title: 'Exportação concluída',
+        title: warnings.length ? 'Arquivo baixado — confira o espaço de corte' : 'Exportação concluída',
         description:
           pageCount > 1
-            ? `${pageCount} páginas em PNG transparente, 300 DPI ou mais, sem redução de resolução.`
-            : 'PNG transparente a 300 DPI ou mais, sem redução de resolução.',
+            ? `${pageCount} páginas em PNG transparente, 300 DPI, com as medidas e posições da montagem.`
+            : 'PNG transparente a 300 DPI, com as medidas e posições da montagem.',
       })
     } catch (err) {
       toast({
@@ -98,8 +105,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
   }
 
   return (
-    <aside className="glass-panel fbs-side-panel flex h-full w-full shrink-0 flex-col overflow-x-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
-      <div className="flex items-center justify-between border-b px-4 py-4">
+    <aside className="glass-panel fbs-side-panel flex h-full min-h-0 w-full shrink-0 flex-col overflow-hidden border-r md:h-full md:w-[var(--sidebar-w,340px)]">
+      <div className="flex shrink-0 items-center justify-between border-b px-4 py-4">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="glow-primary flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Layers className="h-4 w-4" />
@@ -117,124 +124,130 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
       </div>
 
-      <div className="space-y-3 px-4 py-3">
-        <ImageUploadZone />
+      <fieldset disabled={isExporting} aria-label="Artes e configuração da folha" className="fbs-sidebar-scroll m-0 min-h-0 min-w-0 flex-1 overflow-y-scroll overscroll-contain border-0 p-0">
+        <div className="space-y-3 px-4 py-3">
+          <ImageUploadZone />
 
-        <div className="fbs-tool-card space-y-1.5 rounded-xl border bg-muted/40 p-2.5">
-          <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            <Ruler className="h-3.5 w-3.5" /> Tamanho da Folha
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-0.5">
-              <Label htmlFor="canvas-width">Largura (cm)</Label>
-              <Input
-                id="canvas-width"
-                type="number"
-                min={1}
-                value={canvasWidthCm}
-                onChange={(e) => setCanvasWidthCm(Number(e.target.value))}
-              />
+          <div className="fbs-tool-card space-y-1.5 rounded-xl border bg-muted/40 p-2.5">
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <Ruler className="h-3.5 w-3.5" /> Tamanho da Folha
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-0.5">
+                <Label htmlFor="canvas-width">Largura (cm)</Label>
+                <Input
+                  id="canvas-width"
+                  type="number"
+                  min={1}
+                  value={canvasWidthCm}
+                  onChange={(e) => setCanvasWidthCm(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-0.5">
+                <Label htmlFor="max-height">Comprimento (cm)</Label>
+                <Input
+                  id="max-height"
+                  type="number"
+                  min={1}
+                  value={maxHeightCm}
+                  onChange={(e) => setMaxHeightCm(Number(e.target.value))}
+                />
+              </div>
             </div>
-            <div className="space-y-0.5">
-              <Label htmlFor="max-height">Limite/página (cm)</Label>
-              <Input
-                id="max-height"
-                type="number"
-                min={1}
-                value={maxHeightCm}
-                onChange={(e) => setMaxHeightCm(Number(e.target.value))}
-              />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
+                  Espaço (cm)
+                </Label>
+                <Input
+                  id="item-gap"
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={itemGapCm}
+                  onChange={(e) => setItemGapCm(Number(e.target.value))}
+                />
+              </div>
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
+                  Custo/cm² (R$)
+                </Label>
+                <Input
+                  id="cost-cm2"
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={costPerCm2 || ''}
+                  placeholder="0.00"
+                  onChange={(e) => setCostPerCm2(Number(e.target.value))}
+                />
+              </div>
             </div>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">Cada folha terá {canvasWidthCm} × {maxHeightCm} cm ({(maxHeightCm / 100).toFixed(2)} m). Nova página somente quando as artes não couberem neste comprimento.</p>
+            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+              <input type="checkbox" checked={trimExportHeight} onChange={(e) => setTrimExportHeight(e.target.checked)} />
+              Usar só altura ocupada (economizar filme)
+            </label>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="item-gap" className="truncate" title="Espaçamento entre imagens (cm)">
-                Espaço (cm)
-              </Label>
-              <Input
-                id="item-gap"
-                type="number"
-                min={0}
-                step={0.1}
-                value={itemGapCm}
-                onChange={(e) => setItemGapCm(Number(e.target.value))}
-              />
-            </div>
-            <div className="min-w-0 space-y-0.5">
-              <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
-                Custo/cm² (R$)
-              </Label>
-              <Input
-                id="cost-cm2"
-                type="number"
-                min={0}
-                step={0.01}
-                value={costPerCm2 || ''}
-                placeholder="0.00"
-                onChange={(e) => setCostPerCm2(Number(e.target.value))}
-              />
-            </div>
-          </div>
-          <p className="text-[10px] leading-relaxed text-muted-foreground">A exportação usa só a altura ocupada. Este limite apenas divide folhas muito longas em páginas menores.</p>
         </div>
-      </div>
 
-      {hasLayout && (
-        <div className="fbs-tool-card mx-4 rounded-2xl border border-primary/20 bg-primary/5 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary"><Gauge className="h-3.5 w-3.5" /> Aproveitamento</span>
-            <span className="text-sm font-bold tabular-nums text-primary">{Math.round(layoutStats.efficiency)}%</span>
+        {hasLayout && (
+          <div className="fbs-tool-card mx-4 rounded-2xl border border-primary/20 bg-primary/5 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary"><Gauge className="h-3.5 w-3.5" /> Aproveitamento</span>
+              <span className="text-sm font-bold tabular-nums text-primary">{Math.round(layoutStats.efficiency)}%</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-primary/15">
+              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${layoutStats.efficiency}%` }} />
+            </div>
+            <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
+              <span>{layoutStats.pages} página(s)</span>
+              <span>{layoutStats.filmHeight.toFixed(1)} cm de filme</span>
+            </div>
+            {packingStrategy && <p className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground"><Sparkles className="h-3 w-3" /> Encaixe: {packingStrategy}</p>}
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-primary/15">
-            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${layoutStats.efficiency}%` }} />
+        )}
+
+        <Separator />
+
+        <div className="flex items-center justify-between px-4 pt-3">
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Fila
+            {images.length > 0 && <Badge variant="secondary">{images.length}</Badge>}
           </div>
-          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-            <span>{layoutStats.pages} página(s)</span>
-            <span>{layoutStats.filmHeight.toFixed(1)} cm de filme</span>
-          </div>
-          {packingStrategy && <p className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground"><Sparkles className="h-3 w-3" /> Encaixe: {packingStrategy}</p>}
+          {images.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
+              onClick={handleClearAll}
+            >
+              <Trash2 className="h-3 w-3" />
+              Limpar tudo
+            </Button>
+          )}
         </div>
-      )}
+
+        <div className="px-4 py-3" aria-label="Lista de artes">
+          {images.length === 0 ? (
+            <div className="fbs-empty-state flex flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
+              <ImageOff className="h-6 w-6 text-muted-foreground/60" />
+              <p className="text-xs font-medium">Nenhuma imagem na fila</p>
+              <p className="text-[11px] text-muted-foreground">Envie artes acima para começar</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {images.map((img) => (
+                <ImageQueueItem key={img.id} image={img} />
+              ))}
+            </div>
+          )}
+        </div>
+      </fieldset>
 
       <Separator />
 
-      <div className="flex items-center justify-between px-4 pt-3">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Fila
-          {images.length > 0 && <Badge variant="secondary">{images.length}</Badge>}
-        </div>
-        {images.length > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-destructive"
-            onClick={handleClearAll}
-          >
-            <Trash2 className="h-3 w-3" />
-            Limpar tudo
-          </Button>
-        )}
-      </div>
-
-      <ScrollArea className="flex-1 px-4 py-3">
-        {images.length === 0 ? (
-          <div className="fbs-empty-state flex flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center">
-            <ImageOff className="h-6 w-6 text-muted-foreground/60" />
-            <p className="text-xs font-medium">Nenhuma imagem na fila</p>
-            <p className="text-[11px] text-muted-foreground">Envie artes acima para começar</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {images.map((img) => (
-              <ImageQueueItem key={img.id} image={img} />
-            ))}
-          </div>
-        )}
-      </ScrollArea>
-
-      <Separator />
-
-      <div className="space-y-2 px-4 py-3">
+      <div className="shrink-0 space-y-2 px-4 py-3">
         {images.length > 0 && (
           <p className="text-center text-[11px] text-muted-foreground">
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
@@ -247,7 +260,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
         <Button
           className="glow-primary w-full"
-          disabled={images.length === 0}
+          disabled={images.length === 0 || isExporting}
           onClick={handleGenerateLayout}
         >
           <LayoutGrid className="h-4 w-4" />
@@ -256,6 +269,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
         <p className="text-center text-[11px] text-muted-foreground">
           Testa posições e giros de 90° para economizar filme, mantendo as medidas e o espaço de corte.
         </p>
+        {layoutIssues.length > 0 && <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300" role="status">
+          {layoutIssues.some((issue) => issue.type === 'outside-sheet')
+            ? 'Há uma arte fora da folha. Mova-a para dentro antes de baixar.'
+            : 'Há caixas de artes sobrepostas ou com pouco espaço de corte. Confira a montagem; o download mantém tudo como está.'}
+        </p>}
         <Button
           className="w-full"
           variant="secondary"
@@ -263,8 +281,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />
-          {isExporting ? 'Exportando...' : 'Download DTF'}
+          {isExporting ? `Exportando ${exportProgress}%...` : 'Download DTF · 300 DPI'}
         </Button>
+        <p className="text-center text-[10px] text-muted-foreground">PNG transparente · mantém tamanhos, cores, giros e posições.</p>
       </div>
     </aside>
   )
