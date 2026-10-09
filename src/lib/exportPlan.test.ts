@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planExport, proportionatePatch } from './exportPlan'
+import { planExport, proportionatePatch, sheetHeightCm } from './exportPlan'
 import type { PlacedItem } from '@/types'
 
 const art: PlacedItem = { id: 'a', sourceImageId: 'a', previewUrl: 'blob:a', xCm: 0, yCm: 0,
@@ -8,16 +8,29 @@ const art: PlacedItem = { id: 'a', sourceImageId: 'a', previewUrl: 'blob:a', xCm
 const page = (item = art) => ({ index: 0, usedHeightCm: item.heightCm, items: [item] })
 
 describe('resolution and proportion protection', () => {
-  it('retains high-resolution source pixels at the chosen print size', () => {
+  it('exports a high-resolution original at exactly 300 DPI', () => {
     const plan = planExport(page(), 20, 10)
-    expect(plan.pxPerCm * art.widthCm).toBeGreaterThanOrEqual(2400)
-    expect(plan.dpi).toBeGreaterThan(600)
+    expect(plan.pxPerCm).toBe(300 / 2.54)
+    expect(plan.dpi).toBe(300)
+    expect(plan.widthPx).toBe(2363)
   })
   it('uses at least 300 DPI for a low-resolution original without claiming new detail', () => {
     expect(planExport(page({ ...art, contentWidthPx: 200, contentHeightPx: 100 }), 20, 10).dpi).toBeGreaterThanOrEqual(300)
   })
-  it('blocks excessive resolution instead of downsampling', () => {
-    expect(() => planExport(page(), 570, 100)).toThrow('Nenhuma qualidade foi reduzida')
+  it('rejects excessive physical dimensions without silently splitting', () => {
+    expect(() => planExport(page(), 570, 100)).toThrow('não divide artes')
+  })
+  it('supports a continuous 57 cm by 3 metre sheet independently of source density', () => {
+    const plan = planExport(page(), 57, 300)
+    expect(plan.dpi).toBe(300)
+    expect(plan.widthPx).toBe(6733)
+    expect(plan.heightPx).toBe(35434)
+  })
+  it('uses the requested metre length unless trimming is explicitly selected', () => {
+    expect(sheetHeightCm(page(), 100)).toBe(100)
+    expect(sheetHeightCm(page(), 100, true)).toBe(5.1)
+    const rotated = page({ ...art, angle: 90, yCm: 20 })
+    expect(sheetHeightCm(rotated, 100, true)).toBe(30.1)
   })
   it('blocks a deformed or invalid export', () => {
     expect(() => planExport(page({ ...art, heightCm: 7 }), 20, 10)).toThrow('proporção')

@@ -556,7 +556,25 @@ function packBestNext(
 
 function candidateScore(candidate: Candidate): [number, number, number] {
   const totalHeight = candidate.pages.reduce((sum, page) => sum + page.usedHeightCm + END_MARGIN_CM, 0)
-  return [candidate.unplaced.length, totalHeight, candidate.pages.length]
+  // Respect the requested roll length: don't choose many short files merely
+  // because their summed occupied height is a little smaller.
+  return [candidate.unplaced.length, candidate.pages.length, totalHeight]
+}
+
+/** Trials with shorter heights may improve rows, but aren't export boundaries. */
+function joinShortPages(pages: PackedPage[], maxHeightCm: number, gapCm: number): PackedPage[] {
+  const joined: PackedPage[] = []
+  for (const page of pages) {
+    const target = joined.find((entry) => entry.usedHeightCm + gapCm + page.usedHeightCm <= maxHeightCm + EPSILON)
+    if (!target) {
+      joined.push({ ...page, index: joined.length })
+      continue
+    }
+    const offset = target.usedHeightCm + gapCm
+    target.items = [...target.items, ...page.items.map((item) => ({ ...item, yCm: item.yCm + offset }))]
+    target.usedHeightCm = offset + page.usedHeightCm
+  }
+  return joined
 }
 
 function isBetter(candidate: Candidate, current: Candidate): boolean {
@@ -611,6 +629,7 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
   let best = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, strategies[0][0], strategies[0][1])
   for (const [sortStrategy, fitStrategy] of strategies.slice(1)) {
     const candidate = packWithStrategy(units, maxHeightCm, canvasWidthCm, itemGapCm, sortStrategy, fitStrategy)
+    candidate.pages = joinShortPages(candidate.pages, maxHeightCm, itemGapCm)
     if (isBetter(candidate, best)) best = candidate
   }
 
@@ -636,6 +655,7 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
           true
         )
         candidate.name = `${variant.name}/${fitStrategy}`
+        candidate.pages = joinShortPages(candidate.pages, maxHeightCm, itemGapCm)
         if (isBetter(candidate, best)) best = candidate
       }
     }
@@ -673,6 +693,7 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
         seedSortStrategy,
         fitStrategy
       )
+      candidate.pages = joinShortPages(candidate.pages, maxHeightCm, itemGapCm)
       if (isBetter(candidate, best)) best = candidate
     }
   }
@@ -689,6 +710,7 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
       next.splice(to, 0, next.splice(from, 1)[0])
       const candidate = packWithStrategy(next, maxHeightCm, canvasWidthCm, itemGapCm, 'area',
         trial % 2 === 0 ? 'short-side' : 'film-height', true)
+      candidate.pages = joinShortPages(candidate.pages, maxHeightCm, itemGapCm)
       if (isBetter(candidate, best)) {
         best = { ...candidate, name: 'ordem-otimizada' }
         order = next
@@ -699,6 +721,7 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
     for (const ratio of [0.9, 0.75, 0.6, 0.5]) {
       for (const [sort, fit] of strategies.filter(([, fit]) => fit === 'short-side' || fit === 'area')) {
         const candidate = packWithStrategy(units, maxHeightCm * ratio, canvasWidthCm, itemGapCm, sort, fit)
+        candidate.pages = joinShortPages(candidate.pages, maxHeightCm, itemGapCm)
         if (isBetter(candidate, best)) best = { ...candidate, name: `${candidate.name}/redistribuido` }
       }
     }

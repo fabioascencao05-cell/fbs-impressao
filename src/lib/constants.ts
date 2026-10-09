@@ -4,7 +4,8 @@ export const DEFAULT_CANVAS_WIDTH_CM = 57
 // Exact 300 DPI print resolution: 300 dots per inch / 2.54 cm per inch.
 // Keep this value as a float. Pixel dimensions are rounded only when a bitmap is
 // created, avoiding a cumulative sizing error on longer gang sheets.
-export const EXPORT_PX_PER_CM = 300 / 2.54
+export const PRINT_DPI = 300
+export const EXPORT_PX_PER_CM = PRINT_DPI / 2.54
 
 // Keeps a small, predictable clear strip after the last artwork. It protects
 // the bottom edge during printing/cutting without charging a whole unused page.

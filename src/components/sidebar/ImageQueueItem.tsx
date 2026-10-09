@@ -23,13 +23,13 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
   )
   const isPrintReady = isVector || isPrintReadyDpi(effectiveDpi)
   const qualityLabel = isVector
-    ? 'SVG · PNG final a 300 DPI ou mais'
+    ? 'SVG · PNG final a 300 DPI'
     : isPrintReady
-      ? `PNG · resolução preservada`
+      ? `PNG final · 300 DPI`
       : `Original: ${Math.round(effectiveDpi)} DPI · nitidez limitada`
   const qualityHelp = isVector
-    ? 'O SVG é renderizado no PNG transparente final, a pelo menos 300 DPI.'
-    : 'A exportação aumenta o DPI da folha quando necessário para não reduzir a resolução das artes. PNG sem compressão destrutiva. Uma imagem original pequena não ganha detalhes ao ser ampliada.'
+    ? 'O SVG é renderizado no PNG transparente final, a 300 DPI.'
+    : 'A folha é exportada a 300 DPI, usando o arquivo original no tamanho escolhido. PNG sem compressão destrutiva. Uma imagem original pequena não ganha detalhes ao ser ampliada.'
 
   return (
     <div className="fbs-queue-item flex min-w-0 gap-3 rounded-xl border bg-card/60 p-2.5 transition-colors hover:border-primary/40">

@@ -143,6 +143,14 @@ describe('packImages', () => {
     expect(result.pages.flatMap((page) => page.items)).toHaveLength(dimensions.length)
     expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
     expect(filmLengthCm).toBeLessThanOrEqual(68)
+    expect(result.pages).toHaveLength(1)
+  })
+
+  it('keeps a queue of small logos in one configured metre, without ten-art files', () => {
+    const result = packImages([image('logo', 10, 8, 50)], 100, 57, 0.3)
+    expect(result.pages).toHaveLength(1)
+    expect(result.pages[0].items).toHaveLength(50)
+    expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
   })
 
 
