@@ -1,7 +1,7 @@
 // Default canvas width for DTF gang sheet printing (user-editable in the sidebar).
 export const DEFAULT_CANVAS_WIDTH_CM = 57
 
-// Exact 300 DPI print resolution: 300 dots per inch / 2.54 cm per inch.
+// Minimum print resolution: 300 dots per inch / 2.54 cm per inch.
 // Keep this value as a float. Pixel dimensions are rounded only when a bitmap is
 // created, avoiding a cumulative sizing error on longer gang sheets.
 export const PRINT_DPI = 300
@@ -13,7 +13,8 @@ export const EXPORT_END_MARGIN_CM = 0.1
 
 // Lower-resolution scale used for interactive on-screen editing/preview,
 // so the browser isn't rendering multi-thousand-pixel canvases while the
-// user is just arranging artwork. Export always re-renders at EXPORT_PX_PER_CM.
+// user is just arranging artwork. Export uses originals at their native density,
+// never below EXPORT_PX_PER_CM.
 export const DISPLAY_PX_PER_CM = 20
 
 // Default gap left between packed images, in cm (cutting margin; user-editable).

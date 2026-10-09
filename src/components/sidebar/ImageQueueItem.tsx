@@ -23,13 +23,13 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
   )
   const isPrintReady = isVector || isPrintReadyDpi(effectiveDpi)
   const qualityLabel = isVector
-    ? 'SVG · PNG final a 300 DPI'
+    ? 'SVG · PNG final a 300+ DPI'
     : isPrintReady
-      ? `PNG final · 300 DPI`
+      ? `Original preservado · ${Math.round(effectiveDpi)} DPI`
       : `Original: ${Math.round(effectiveDpi)} DPI · nitidez limitada`
   const qualityHelp = isVector
-    ? 'O SVG é renderizado no PNG transparente final, a 300 DPI.'
-    : 'A folha é exportada a 300 DPI, usando o arquivo original no tamanho escolhido. PNG sem compressão destrutiva. Uma imagem original pequena não ganha detalhes ao ser ampliada.'
+    ? 'O SVG é renderizado no PNG transparente final, com mínimo de 300 DPI.'
+    : 'O PNG usa o arquivo original e a maior densidade das artes da folha, com mínimo de 300 DPI. Arquivos acima de 300 DPI não são reduzidos. Uma imagem original pequena não ganha detalhes ao ser ampliada.'
 
   return (
     <div className="fbs-queue-item flex min-w-0 gap-3 rounded-xl border bg-card/60 p-2.5 transition-colors hover:border-primary/40">
@@ -49,6 +49,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
             size="icon"
             className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
             onClick={() => removeImage(image.id)}
+            title="Apagar esta imagem e todas as suas cópias"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </Button>

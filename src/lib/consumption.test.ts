@@ -19,11 +19,18 @@ describe('consumo físico de DTF', () => {
     expect(result.cost).toBeCloseTo(40.70)
     expect(result.filmAreaCm2).toBeCloseTo(57 * 74)
   })
-  it('inclui a posição inicial, espaços e uma única margem após a última arte', () => {
+  it('ignora a faixa inicial recortada, conserva espaços internos e uma margem final', () => {
     const result = calculateConsumption([page([item({ yCm: 0.5 }), item({ yCm: 10.8 })])], 57, 55)
-    expect(result.lengthCm).toBeCloseTo(20.9)
+    expect(result.lengthCm).toBeCloseTo(20.4)
     expect(result.imageAreaCm2).toBe(400)
-    expect(result.wasteAreaCm2).toBeCloseTo(57 * 20.9 - 400)
+    expect(result.wasteAreaCm2).toBeCloseTo(57 * 20.4 - 400)
+  })
+  it('transladar a montagem inteira sobre espaço vazio não aumenta a cobrança do PNG útil', () => {
+    const items = [item(), item({ id: 'art-1', yCm: 10.3 })]
+    const initial = calculateConsumption([page(items)], 57, 55)
+    const moved = calculateConsumption([page(items.map(item => ({ ...item, xCm: item.xCm + 15, yCm: item.yCm + 70 })))], 57, 55)
+    expect(moved.lengthCm).toBeCloseTo(initial.lengthCm)
+    expect(moved.cost).toBeCloseTo(initial.cost)
   })
   it.each([0, 90, 180, 270, 45, 123])('mede a projeção vertical a %s graus sem alterar a área física', angle => {
     const result = calculateConsumption([page([item({ angle })])], 57, 55)

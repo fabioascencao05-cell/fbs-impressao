@@ -24,7 +24,7 @@ export async function encodeRgbaPng(
   strips: AsyncIterable<{ rgba: Uint8ClampedArray; rows: number }>
 ): Promise<Blob> {
   if (typeof CompressionStream === 'undefined')
-    throw new Error('Atualize o navegador para exportar PNG contínuo a 300 DPI.')
+    throw new Error('Atualize o navegador para exportar PNG contínuo na resolução original.')
   const header = new Uint8Array(13)
   const headerView = new DataView(header.buffer)
   headerView.setUint32(0, width)
