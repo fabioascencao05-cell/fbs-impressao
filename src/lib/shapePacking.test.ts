@@ -18,6 +18,12 @@ function triangle(): OccupancyMask {
   return { cols, rows, data }
 }
 
+function silhouette(cols: number, rows: number, inside: (x: number, y: number) => boolean): OccupancyMask {
+  const data = new Uint8Array(cols * rows)
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (inside(x / cols, y / rows)) data[y * cols + x] = 1
+  return { cols, rows, data }
+}
+
 it('encaixa uma peça indivisível na diagonal que 0°/90° rejeitam', () => {
   const images = [image('faixa', 10, 1)]
   const baseline = packImages(images, 8, 8, 0.3)
@@ -110,3 +116,61 @@ it('conclui o encaixe de 30 contornos antes de esgotar a busca angular', () => {
   expect(result.pages[0].usedHeightCm).toBeLessThan(80)
   expect(validateLayout(result.pages, 57, 100, 0.3)).toEqual([])
 }, 10000)
+
+it('redistribui uma fila grande de contornos mistos em duas folhas sem perder as melhorias por limite de busca', () => {
+  // Synthetic silhouettes exercise the proportions and mixed quantities of
+  // the reported long montage; they are not copies of the user's artwork.
+  const emblem = silhouette(100, 100, (x, y) => x < .43 && y > .10 && y < .84
+    || (x - .65) ** 2 / .34 ** 2 + (y - .5) ** 2 / .48 ** 2 < 1
+    || y > .72 && y < .86 && x > .19 && x < .79)
+  const logo = silhouette(100, 70, (x, y) => x > .10 && x < .92 && y > .25 && y < .9
+    || x > .25 && x < .63 && y < .26 || x > .88 && y > .15 && y < .55)
+  const images = [image('red', 29.4, 31.2, 7, emblem), image('cream', 27.1, 28.2, 11, emblem),
+    image('blue', 29.4, 18.3, 9, logo), image('small-red', 9, 9.55, 7, emblem),
+    image('small-cream', 8, 8.32, 9, emblem), image('text', 18.2, 2.3, 4), image('names', 12, 36)]
+  const baseline = packImages(images, 200, 57, .3)
+  expect(baseline.pages).toHaveLength(3)
+  const original = structuredClone(baseline)
+  const progress: Array<[number, number]> = []
+  const result = packImagesByShape(images, baseline, 57, 200, .3, (done, total) => progress.push([done, total]))
+  expect(result.pages).toHaveLength(2)
+  expect(result.unplaced).toEqual([])
+  const items = result.pages.flatMap(page => page.items)
+  expect(items).toHaveLength(48)
+  expect(new Set(items.map(item => item.id)).size).toBe(48)
+  expect(items.map(item => item.id).sort()).toEqual(original.pages.flatMap(page => page.items.map(item => item.id)).sort())
+  expect(baseline).toEqual(original)
+  expect(validateLayout(result.pages, 57, 200, .3)).toEqual([])
+  for (const item of items) {
+    const source = images.find(image => image.id === item.sourceImageId)!
+    expect([item.widthCm, item.heightCm, item.previewUrl, item.contentWidthPx, item.contentHeightPx])
+      .toEqual([source.widthCm, source.heightCm, source.previewUrl, source.contentWidthPx, source.contentHeightPx])
+  }
+  expect(progress.at(-1)![0]).toBe(progress.at(-1)![1])
+  expect(progress.every(([done, total], index) => done <= total && (!index || done >= progress[index - 1][0]))).toBe(true)
+}, 30000)
+
+it('mantém a grade econômica de cópias opacas quando não há contornos para ganhar espaço', () => {
+  const images = [image('opaque', 29.4, 18.3, 9)]
+  const baseline = packImages(images, 90, 57, .3)
+  const result = packImagesByShape(images, baseline, 57, 90, .3)
+  expect(result.pages).toHaveLength(1)
+  expect(result.pages[0].items).toHaveLength(9)
+  expect(result.pages[0].usedHeightCm).toBeCloseTo(88.8)
+  expect(validateLayout(result.pages, 57, 90, .3)).toEqual([])
+})
+
+it('testa a última posição da folha quando o vão só cabe fora dos passos de 3 mm', () => {
+  const images = [image('wide', 6.7, 4), image('narrow', 3.3, 4)]
+  const reference = packImages(images, 4, 10, 0)
+  // The narrow piece has just one valid x position: 6.7 cm. The fast grid's
+  // previous 0, 0.3, ... 6.6 cm samples missed it on every orientation.
+  const baseline = { ...reference, pages: reference.pages.flatMap(page => page.items.map((item, index) => ({
+    index, items: [{ ...item, xCm: 0, yCm: 0 }], usedHeightCm: 4,
+  }))) }
+  const result = packImagesByShape(images, baseline, 10, 4, 0)
+  expect(result.pages).toHaveLength(1)
+  expect(result.pages[0].items).toHaveLength(2)
+  expect(result.pages[0].usedHeightCm).toBeCloseTo(4)
+  expect(validateLayout(result.pages, 10, 4, 0)).toEqual([])
+})
