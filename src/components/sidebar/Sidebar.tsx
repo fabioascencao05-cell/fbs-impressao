@@ -1,3 +1,4 @@
+import { occupiedAreaCm2 } from '@/lib/occupiedArea'
 import { LayoutGrid, Download, X, Layers, ImageOff, Trash2, Gauge, Ruler, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +30,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
   const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
   const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
+  const packingProgress = useGangSheetStore((s) => s.packingProgress)
+  const cancelPacking = useGangSheetStore((s) => s.cancelPacking)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
   const unplacedImages = useGangSheetStore((s) => s.unplacedImages)
@@ -43,7 +46,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
   const layoutStats = useMemo(() => {
     const visible = pages.filter((page) => page.items.length > 0)
-    const artArea = visible.flatMap((page) => page.items).reduce((sum, item) => sum + item.widthCm * item.heightCm, 0)
+    const artArea = visible.flatMap((page) => page.items).reduce((sum, item) => sum + occupiedAreaCm2(item), 0)
     const filmHeight = visible.reduce((sum, page) => sum + sheetHeightCm(page, maxHeightCm, trimExportHeight), 0)
     const filmArea = canvasWidthCm * filmHeight
     return {
@@ -53,8 +56,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
     }
   }, [canvasWidthCm, maxHeightCm, pages, trimExportHeight])
 
-  const handleGenerateLayout = () => {
-    generateLayout()
+  const handleGenerateLayout = async () => {
+    try { if (!await generateLayout()) return } catch (error) {
+      toast({ variant: 'destructive', title: 'Falha ao otimizar', description: error instanceof Error ? error.message : 'Tente novamente.' })
+      return
+    }
     const skipped = useGangSheetStore.getState().unplacedImages
     if (skipped.length > 0) {
       toast({
@@ -124,7 +130,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
       </div>
 
-      <fieldset disabled={isExporting} aria-label="Artes e configuração da folha" className="fbs-sidebar-scroll m-0 min-h-0 min-w-0 flex-1 overflow-y-scroll overscroll-contain border-0 p-0">
+      <fieldset disabled={isExporting || !!packingProgress} aria-label="Artes e configuração da folha" className="fbs-sidebar-scroll m-0 min-h-0 min-w-0 flex-1 overflow-y-scroll overscroll-contain border-0 p-0">
         <div className="space-y-3 px-4 py-3">
           <ImageUploadZone />
 
@@ -260,24 +266,25 @@ export default function Sidebar({ onClose }: SidebarProps) {
         )}
         <Button
           className="glow-primary w-full"
-          disabled={images.length === 0 || isExporting}
+          disabled={images.length === 0 || isExporting || !!packingProgress}
           onClick={handleGenerateLayout}
         >
           <LayoutGrid className="h-4 w-4" />
-          Otimizar encaixe
+          {packingProgress ? `Otimizando ${Math.round(packingProgress.done / packingProgress.total * 100)}%...` : 'Otimizar encaixe'}
         </Button>
         <p className="text-center text-[11px] text-muted-foreground">
-          Testa posições e giros de 90° para economizar filme, mantendo as medidas e o espaço de corte.
+          Busca espaços entre os contornos e giros em toda a volta, com ajuste fino de ângulo. Mantém medidas e espaço de corte.
         </p>
+        {packingProgress && <Button variant="outline" className="w-full" onClick={cancelPacking}>Cancelar otimização</Button>}
         {layoutIssues.length > 0 && <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300" role="status">
           {layoutIssues.some((issue) => issue.type === 'outside-sheet')
             ? 'Há uma arte fora da folha. Mova-a para dentro antes de baixar.'
-            : 'Há caixas de artes sobrepostas ou com pouco espaço de corte. Confira a montagem; o download mantém tudo como está.'}
+            : 'Há artes sobrepostas ou com pouco espaço de corte. Confira a montagem; o download mantém tudo como está.'}
         </p>}
         <Button
           className="w-full"
           variant="secondary"
-          disabled={!hasLayout || isExporting || unplacedImages.length > 0}
+          disabled={!hasLayout || isExporting || !!packingProgress || unplacedImages.length > 0}
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />

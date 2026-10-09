@@ -1,3 +1,4 @@
+import { occupiedAreaCm2 } from '@/lib/occupiedArea'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Layers, Trash2 } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
@@ -8,11 +9,12 @@ import { Button } from '@/components/ui/button'
 import Ruler from './Ruler'
 import CanvasPage, { type SelectionInfo } from './CanvasPage'
 import CanvasToolbar from './CanvasToolbar'
+import { toast } from '@/hooks/use-toast'
 import type { PackedPage } from '@/types'
 
 function sheetEfficiency(page: PackedPage, canvasWidthCm: number): number {
   if (page.usedHeightCm <= 0) return 0
-  const usedArea = page.items.reduce((sum, it) => sum + it.widthCm * it.heightCm, 0)
+  const usedArea = page.items.reduce((sum, it) => sum + occupiedAreaCm2(it), 0)
   const regionArea = canvasWidthCm * page.usedHeightCm
   return regionArea > 0 ? Math.min(1, usedArea / regionArea) : 0
 }
@@ -69,9 +71,10 @@ export default function CanvasWorkspace() {
     [removePage]
   )
 
-  const handleRegenerate = useCallback(() => {
-    generateLayout()
-    setSelection(null)
+  const handleRegenerate = useCallback(async () => {
+    try { if (await generateLayout()) setSelection(null) } catch (error) {
+      toast({ variant: 'destructive', title: 'Falha ao otimizar', description: error instanceof Error ? error.message : 'Tente novamente.' })
+    }
   }, [generateLayout])
 
   const handleZoomFit = useCallback(() => {
@@ -225,7 +228,7 @@ export default function CanvasWorkspace() {
                         {canvasWidthCm}cm × {sheetHeightCm.toFixed(1)}cm · usado{' '}
                         {page.usedHeightCm.toFixed(1)}cm
                       </span>
-                      <Badge variant={effVariant} title="Aproveitamento da área usada">
+                      <Badge variant={effVariant} title="Área estimada pelos contornos das artes sobre o filme usado">
                         {Math.round(eff * 100)}% aproveitado
                       </Badge>
                       {pageCost > 0 && (

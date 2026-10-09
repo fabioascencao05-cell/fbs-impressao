@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useGangSheetStore } from './useGangSheetStore'
 import type { GangImage, PlacedItem } from '@/types'
 
@@ -96,5 +96,75 @@ describe('validade do layout DTF', () => {
     useGangSheetStore.getState().setTrimExportHeight(true)
     expect(useGangSheetStore.getState().pages).toBe(pages)
     expect(useGangSheetStore.getState().trimExportHeight).toBe(true)
+  })
+})
+
+// Worker lifecycle matters: an old optimization must never overwrite manual
+// edits or a newer upload/measurement, and cancellation retains the old layout.
+
+class FakeWorker {
+  static latest: FakeWorker
+  onmessage: ((event: MessageEvent) => void) | null = null
+  onerror: ((event: ErrorEvent) => void) | null = null
+  terminated = false
+  input: { images: Array<{ file?: File }> } | null = null
+  constructor() { FakeWorker.latest = this }
+  postMessage(input: typeof this.input) { this.input = input }
+  terminate() { this.terminated = true }
+  emit(data: unknown) { this.onmessage?.({ data } as MessageEvent) }
+}
+
+describe('otimização em segundo plano', () => {
+  beforeEach(() => {
+    vi.stubGlobal('Worker', FakeWorker)
+    useGangSheetStore.setState({ images: [sourceImage('art')],
+      pages: [{ index: 0, items: [placed('manual', 'art', 20)], usedHeightCm: 30 }], packingProgress: null })
+  })
+  afterEach(() => { useGangSheetStore.getState().cancelPacking(); vi.unstubAllGlobals() })
+
+  it('mantém a montagem enquanto busca e substitui somente após terminar', async () => {
+    const oldPages = useGangSheetStore.getState().pages
+    const task = useGangSheetStore.getState().generateLayout(), worker = FakeWorker.latest
+    expect(useGangSheetStore.getState().pages).toBe(oldPages)
+    expect(worker.input?.images[0].file).toBeUndefined()
+    worker.emit({ type: 'progress', done: 1, total: 3 })
+    expect(useGangSheetStore.getState().packingProgress).toEqual({ done: 1, total: 3 })
+    const pages = [{ index: 0, items: [placed('art-0', 'art', 0)], usedHeightCm: 10 }]
+    worker.emit({ type: 'result', result: { pages, unplaced: [], strategy: 'contornos/rotacao-livre' } })
+    expect(await task).toBe(true)
+    expect(useGangSheetStore.getState().pages).toBe(pages)
+    expect(useGangSheetStore.getState().packingProgress).toBeNull()
+    expect(worker.terminated).toBe(true)
+  })
+
+  it('cancelar preserva ajustes e ignora uma resposta tardia', async () => {
+    const oldPages = useGangSheetStore.getState().pages
+    const task = useGangSheetStore.getState().generateLayout(), worker = FakeWorker.latest
+    useGangSheetStore.getState().cancelPacking()
+    worker.emit({ type: 'result', result: { pages: [], unplaced: [], strategy: 'antigo' } })
+    expect(await task).toBe(false)
+    expect(worker.terminated).toBe(true)
+    expect(useGangSheetStore.getState().pages).toBe(oldPages)
+    expect(useGangSheetStore.getState().packingProgress).toBeNull()
+  })
+
+  it('uma alteração de medida cancela a busca antes que ela possa restaurar um layout antigo', async () => {
+    const task = useGangSheetStore.getState().generateLayout(), worker = FakeWorker.latest
+    useGangSheetStore.getState().updateWidthCm('art', 15)
+    worker.emit({ type: 'result', result: { pages: [{ index: 0, items: [placed('art-0', 'art', 0)], usedHeightCm: 10 }], unplaced: [], strategy: 'antigo' } })
+    expect(await task).toBe(false)
+    expect(useGangSheetStore.getState().pages).toEqual([])
+    expect(useGangSheetStore.getState().images[0].widthCm).toBe(15)
+  })
+
+  it('uma falha no worker libera os controles e mantém a montagem atual', async () => {
+    const oldPages = useGangSheetStore.getState().pages
+    const task = useGangSheetStore.getState().generateLayout(), worker = FakeWorker.latest
+    const assertion = expect(task).rejects.toThrow('Falha de teste')
+    worker.emit({ type: 'error', message: 'Falha de teste' })
+    await assertion
+    expect(useGangSheetStore.getState().pages).toBe(oldPages)
+    expect(useGangSheetStore.getState().packingProgress).toBeNull()
+    expect(worker.terminated).toBe(true)
   })
 })

@@ -1,3 +1,4 @@
+import { CELL_CM, clearanceOffsets, forEachSheetCell, shapeFor } from './shapeMask'
 import { rotatedAabbCm } from './geometry'
 import type { PackedPage, PlacedItem } from '@/types'
 
@@ -50,21 +51,39 @@ export function validateLayout(
     }
     for (let first = 0; first < bounds.length; first++) {
       for (let second = first + 1; second < bounds.length; second++) {
-        if (overlaps(bounds[first].bounds, bounds[second].bounds)) {
-          issues.push({
-            type: 'overlap',
-            pageIndex: page.index,
-            itemIds: [bounds[first].item.id, bounds[second].item.id],
-            message: `Duas artes se sobrepõem na página ${page.index + 1}.`,
-          })
-        } else if (itemGapCm > 0 && distanceBetween(bounds[first].bounds, bounds[second].bounds) < itemGapCm - EPSILON) {
-          issues.push({
-            type: 'insufficient-gap',
-            pageIndex: page.index,
-            itemIds: [bounds[first].item.id, bounds[second].item.id],
-            message: `Duas artes da página ${page.index + 1} estão com menos de ${itemGapCm.toFixed(1)} cm de espaço.`,
-          })
+        const a = bounds[first], b = bounds[second]
+        if (distanceBetween(a.bounds, b.bounds) >= Math.max(itemGapCm, EPSILON)) continue
+        let overlap = overlaps(a.bounds, b.bounds)
+        let close = !overlap && itemGapCm > 0 && distanceBetween(a.bounds, b.bounds) < itemGapCm - EPSILON
+        const irregular = a.item.occupancyMask || b.item.occupancyMask || a.item.angle % 90 || b.item.angle % 90
+        if (irregular) {
+          // Bounding boxes may overlap legitimately. Compare occupied areas in
+          // the same conservative physical grid used by the contour solver.
+          const margin = Math.ceil(itemGapCm / CELL_CM) + 2
+          const originX = Math.floor(Math.min(a.bounds.left, b.bounds.left) / CELL_CM) - margin
+          const originY = Math.floor(Math.min(a.bounds.top, b.bounds.top) / CELL_CM) - margin
+          const stride = Math.ceil((Math.max(a.bounds.right, b.bounds.right) / CELL_CM) - originX) + margin + 2
+          const key = (x: number, y: number) => (y - originY) * stride + x - originX
+          const cells = new Set<number>()
+          forEachSheetCell(a.item, shapeFor(a.item.occupancyMask, a.item.widthCm, a.item.heightCm, a.item.angle),
+            (x, y) => { cells.add(key(x, y)) })
+          const shapeB = shapeFor(b.item.occupancyMask, b.item.widthCm, b.item.heightCm, b.item.angle)
+          overlap = forEachSheetCell(b.item, shapeB, (x, y) => cells.has(key(x, y)))
+          close = false
+          if (!overlap && itemGapCm > 0) {
+            const neighbors = clearanceOffsets(itemGapCm)
+            close = forEachSheetCell(b.item, shapeB, (x, y) => {
+              for (const [dx, dy] of neighbors) if (cells.has(key(x + dx, y + dy))) return true
+            })
+          }
         }
+        if (overlap || close) issues.push({
+          type: overlap ? 'overlap' : 'insufficient-gap',
+          pageIndex: page.index,
+          itemIds: [a.item.id, b.item.id],
+          message: overlap ? `Duas artes se sobrepõem na página ${page.index + 1}.`
+            : `Duas artes da página ${page.index + 1} estão com menos de ${itemGapCm.toFixed(1)} cm de espaço.`,
+        })
       }
     }
   }
