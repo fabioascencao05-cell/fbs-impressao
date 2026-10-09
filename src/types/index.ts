@@ -1,3 +1,9 @@
+export interface OccupancyMask {
+  cols: number
+  rows: number
+  data: Uint8Array
+}
+
 export interface GangImage {
   id: string
   file: File
@@ -5,6 +11,7 @@ export interface GangImage {
   naturalWidthPx: number
   naturalHeightPx: number
   aspectRatio: number // trimmed content height / width
+  occupancyMask?: OccupancyMask
   quantity: number
   widthCm: number
   heightCm: number
@@ -27,7 +34,8 @@ export interface PlacedItem {
   // derived from these plus `angle` (see rotatedAabbCm).
   widthCm: number
   heightCm: number
-  angle: number // rotation in degrees (0 or 90 from the packer; any value if the user rotates by hand)
+  angle: number // degrees; automatic and manual rotation may use any angle
+  occupancyMask?: OccupancyMask
   // Content bounding box (tight non-transparent rect) + full file dimensions,
   // carried over from the source GangImage so the renderer/exporter can crop the
   // image to just the visible art before scaling/rotating it into place.

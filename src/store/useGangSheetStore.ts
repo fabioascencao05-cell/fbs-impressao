@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { proportionatePatch } from '@/lib/exportPlan'
-import { packImages } from '@/lib/binPacking'
+import type { packImages } from '@/lib/binPacking'
 import { rotatedAabbCm } from '@/lib/geometry'
 import { computeContentBox } from '@/lib/trimImage'
+import { readOccupancyMask } from '@/lib/shapeMask'
 import { defaultPrintWidthCm } from '@/lib/printQuality'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
@@ -25,6 +26,7 @@ interface GangSheetState {
   pages: PackedPage[]
   unplacedImages: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
   packingStrategy: string | null
+  packingProgress: { done: number; total: number } | null
   zoom: number
   sheetBackgroundColor: string
   costPerCm2: number
@@ -36,7 +38,8 @@ interface GangSheetState {
   setMaxHeightCm: (heightCm: number) => void
   setCanvasWidthCm: (widthCm: number) => void
   setItemGapCm: (gapCm: number) => void
-  generateLayout: () => void
+  generateLayout: () => Promise<boolean>
+  cancelPacking: () => void
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
   duplicatePlacedItem: (pageIndex: number, itemId: string) => void
@@ -69,7 +72,18 @@ const clearedLayout = () => ({
   pages: [] as PackedPage[],
   unplacedImages: [] as GangSheetState['unplacedImages'],
   packingStrategy: null,
+  packingProgress: null,
 })
+
+let activeWorker: Worker | null = null
+let activeResolve: ((finished: boolean) => void) | null = null
+function stopWorker() {
+  activeWorker?.terminate()
+  activeWorker = null
+  const resolve = activeResolve
+  activeResolve = null
+  resolve?.(false)
+}
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   images: [],
@@ -81,6 +95,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   pages: [],
   unplacedImages: [],
   packingStrategy: null,
+  packingProgress: null,
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
   costPerCm2: 0,
@@ -97,6 +112,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         accepted.slice(start, start + 4).map(async (file): Promise<GangImage | null> => {
           try {
             const box = await computeContentBox(file)
+            const occupancyMask = await readOccupancyMask(file, box)
             const aspectRatio = box.heightPx / box.widthPx
             const widthCm = defaultPrintWidthCm(box.widthPx)
             const image: GangImage = {
@@ -107,6 +123,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
               naturalHeightPx: box.naturalHeightPx,
               aspectRatio,
               quantity: 1,
+              occupancyMask: occupancyMask ?? undefined,
               widthCm,
               heightCm: widthCm * aspectRatio,
               contentXPx: box.xPx,
@@ -124,11 +141,13 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       newImages.push(...batch.filter((image): image is GangImage => image !== null))
     }
 
+    stopWorker()
     set((state) => ({ images: [...state.images, ...newImages], ...clearedLayout() }))
     return { added: newImages.length, skipped }
   },
 
   removeImage: (id) => {
+    stopWorker()
     set((state) => {
       const target = state.images.find((img) => img.id === id)
       if (target) URL.revokeObjectURL(target.previewUrl)
@@ -144,11 +163,13 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         pages,
         unplacedImages: state.unplacedImages.filter((it) => it.sourceImageId !== id),
         packingStrategy: null,
+        packingProgress: null,
       }
     })
   },
 
   updateQuantity: (id, quantity) => {
+    stopWorker()
     set((state) => ({
       images: state.images.map((img) =>
         img.id === id ? { ...img, quantity: Number.isFinite(quantity) ? Math.max(1, Math.floor(quantity)) : img.quantity } : img
@@ -158,6 +179,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   updateWidthCm: (id, widthCm) => {
+    stopWorker()
     set((state) => ({
       images: state.images.map((img) =>
         img.id === id && Number.isFinite(widthCm) && widthCm > 0
@@ -169,24 +191,76 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   setMaxHeightCm: (heightCm) => {
+    stopWorker()
     set((state) => ({ maxHeightCm: finiteAtLeast(heightCm, 1, state.maxHeightCm), ...clearedLayout() }))
   },
 
   setCanvasWidthCm: (widthCm) => {
+    stopWorker()
     set((state) => ({ canvasWidthCm: finiteAtLeast(widthCm, 1, state.canvasWidthCm), ...clearedLayout() }))
   },
 
   setItemGapCm: (gapCm) => {
+    stopWorker()
     set((state) => ({ itemGapCm: finiteAtLeast(gapCm, 0, state.itemGapCm), ...clearedLayout() }))
   },
 
   generateLayout: () => {
+    stopWorker()
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
-    const result = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
-    set({ pages: result.pages, unplacedImages: result.unplaced, packingStrategy: result.strategy })
+    if (!images.length) { set(clearedLayout()); return Promise.resolve(false) }
+    set({ packingProgress: { done: 0, total: 1 } })
+    return new Promise<boolean>((resolve, reject) => {
+      let worker: Worker
+      try {
+        worker = new Worker(new URL('../lib/packing.worker.ts', import.meta.url), { type: 'module' })
+      } catch (error) { set({ packingProgress: null }); reject(error); return }
+      activeWorker = worker
+      activeResolve = resolve
+      worker.onmessage = (event: MessageEvent<{ type: string; done?: number; total?: number; result?: ReturnType<typeof packImages>; message?: string }>) => {
+        if (worker !== activeWorker) return
+        if (event.data.type === 'progress') {
+          set({ packingProgress: { done: event.data.done ?? 0, total: event.data.total ?? 1 } })
+          return
+        }
+        activeResolve = null
+        stopWorker()
+        if (event.data.type === 'error' || !event.data.result) {
+          set({ packingProgress: null })
+          reject(new Error(event.data.message ?? 'Falha ao otimizar.'))
+          return
+        }
+        const current = get()
+        if (current.images === images && current.maxHeightCm === maxHeightCm && current.canvasWidthCm === canvasWidthCm && current.itemGapCm === itemGapCm) {
+          const result = event.data.result
+          set({ pages: result.pages, unplacedImages: result.unplaced, packingStrategy: result.strategy, packingProgress: null })
+        } else set({ packingProgress: null })
+        resolve(current.images === images && current.maxHeightCm === maxHeightCm && current.canvasWidthCm === canvasWidthCm && current.itemGapCm === itemGapCm)
+      }
+      worker.onerror = (event) => {
+        if (worker !== activeWorker) return
+        activeResolve = null
+        stopWorker()
+        set({ packingProgress: null })
+        reject(new Error(event.message || 'Falha ao otimizar.'))
+      }
+      // Files are only decoded on upload. The worker needs geometry and alpha,
+      // not another structured clone of every original image file.
+      try {
+        worker.postMessage({ images: images.map(image => ({ ...image, file: undefined })), maxHeightCm, canvasWidthCm, itemGapCm })
+      } catch (error) {
+        activeResolve = null
+        stopWorker()
+        set({ packingProgress: null })
+        reject(error)
+      }
+    })
   },
 
+  cancelPacking: () => { stopWorker(); set({ packingProgress: null }) },
+
   updatePlacedItem: (pageIndex, itemId, patch) => {
+    get().cancelPacking()
     set((state) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
@@ -198,6 +272,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   removePlacedItem: (pageIndex, itemId) => {
+    get().cancelPacking()
     set((state) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
@@ -209,6 +284,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   duplicatePlacedItem: (pageIndex, itemId) => {
+    get().cancelPacking()
     set((state) => ({
       pages: state.pages.map((page) => {
         if (page.index !== pageIndex) return page
@@ -228,6 +304,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   },
 
   removePage: (pageIndex) => {
+    get().cancelPacking()
     set((state) => ({
       pages: state.pages
         .filter((page) => page.index !== pageIndex)
@@ -242,9 +319,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   setCostPerCm2: (cost) => set((state) => ({ costPerCm2: finiteAtLeast(cost, 0, state.costPerCm2) })),
 
   reset: () => {
+    stopWorker()
     set((state) => {
       state.images.forEach((img) => URL.revokeObjectURL(img.previewUrl))
-      return { images: [], pages: [], unplacedImages: [], packingStrategy: null }
+      return { images: [], pages: [], unplacedImages: [], packingStrategy: null, packingProgress: null }
     })
   },
 }))

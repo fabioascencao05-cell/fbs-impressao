@@ -36,6 +36,7 @@ export default function CanvasToolbar({
   onDuplicateSelected,
   onRegenerate,
 }: CanvasToolbarProps) {
+  const packingProgress = useGangSheetStore((s) => s.packingProgress)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
   const setSheetBackgroundColor = useGangSheetStore((s) => s.setSheetBackgroundColor)
 
@@ -106,7 +107,7 @@ export default function CanvasToolbar({
 
       <Separator orientation="vertical" className="h-6" />
 
-      <Button variant="outline" size="sm" className="h-8" onClick={onRegenerate} title="Reorganiza tudo automaticamente (descarta ajustes manuais)">
+      <Button variant="outline" size="sm" className="h-8" onClick={onRegenerate} disabled={!!packingProgress} title="Reorganiza tudo automaticamente (descarta ajustes manuais)">
         <RefreshCw className="h-4 w-4" />
         Re-empacotar
       </Button>
