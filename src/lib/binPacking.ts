@@ -587,6 +587,78 @@ function isBetter(candidate: Candidate, current: Candidate): boolean {
   return false
 }
 
+/** Repeated pieces need a row plan, not a greedy decision for the first copy.
+ * Dynamic programming chooses full rotated rows and a shorter partial row,
+ * then partitions those plans into the configured physical page length.
+ */
+function packRepeatedRows(units: PackableUnit[], maxHeightCm: number, widthCm: number, gapCm: number): Candidate | null {
+  if (!units.length || units.length > 1000) return null
+  const first = units[0]
+  if (!units.every(unit => Math.abs(unit.widthCm - first.widthCm) < EPSILON
+    && Math.abs(unit.heightCm - first.heightCm) < EPSILON)) return null
+  const rowOptions = [0, 90].map(angle => {
+    const box = rotatedAabbCm(first.widthCm, first.heightCm, angle)
+    return { angle, width: box.wCm, height: box.hCm,
+      columns: Math.min(units.length, Math.floor((widthCm + gapCm + EPSILON) / (box.wCm + gapCm))) }
+  }).filter(row => row.columns > 0 && row.height <= maxHeightCm + EPSILON)
+  if (!rowOptions.length) return null
+  const count = units.length
+  const rowHeights = new Float64Array(count + 1).fill(Infinity)
+  const rowCounts = new Int32Array(count + 1)
+  const rowAngles = new Int32Array(count + 1)
+  rowHeights[0] = 0
+  for (let n = 1; n <= count; n++) {
+    for (const row of rowOptions) for (let k = 1; k <= Math.min(n, row.columns); k++) {
+      const height = rowHeights[n - k] + (n > k ? gapCm : 0) + row.height
+      if (height < rowHeights[n] - EPSILON || (Math.abs(height - rowHeights[n]) < EPSILON && k > rowCounts[n])) {
+        rowHeights[n] = height
+        rowCounts[n] = k
+        rowAngles[n] = row.angle
+      }
+    }
+  }
+  const pageCounts = new Int32Array(count + 1).fill(count + 1)
+  const filmHeights = new Float64Array(count + 1).fill(Infinity)
+  const pageCopies = new Int32Array(count + 1)
+  pageCounts[0] = 0
+  filmHeights[0] = 0
+  for (let n = 1; n <= count; n++) for (let k = 1; k <= n; k++) {
+    if (rowHeights[k] > maxHeightCm + EPSILON) continue
+    const pages = pageCounts[n - k] + 1, film = filmHeights[n - k] + rowHeights[k]
+    if (pages < pageCounts[n] || (pages === pageCounts[n] && (film < filmHeights[n] - EPSILON
+      || (Math.abs(film - filmHeights[n]) < EPSILON && k > pageCopies[n])))) {
+      pageCounts[n] = pages
+      filmHeights[n] = film
+      pageCopies[n] = k
+    }
+  }
+  if (!pageCopies[count]) return null
+  const pages: PackedPage[] = []
+  let remaining = count, cursor = 0
+  while (remaining) {
+    const copies = pageCopies[remaining], rows: Array<{ count: number; angle: number }> = []
+    for (let n = copies; n;) {
+      rows.push({ count: rowCounts[n], angle: rowAngles[n] })
+      n -= rowCounts[n]
+    }
+    // Full wide rows first; a short final row avoids spending a whole rotated
+    // row on the last copy. Row order doesn't change the occupied length.
+    rows.sort((a, b) => b.count - a.count || b.angle - a.angle)
+    const items: PlacedItem[] = []
+    let yCm = 0
+    for (const row of rows) {
+      const box = rotatedAabbCm(first.widthCm, first.heightCm, row.angle)
+      for (let column = 0; column < row.count; column++) {
+        items.push({ ...units[cursor++], xCm: column * (box.wCm + gapCm), yCm, angle: row.angle })
+      }
+      yCm += box.hCm + gapCm
+    }
+    pages.push({ index: pages.length, items, usedHeightCm: yCm - gapCm })
+    remaining -= copies
+  }
+  return { pages, unplaced: [], name: 'fileiras/rotacao-uniforme' }
+}
+
 /**
  * Packs the same queue through several independent MaxRects strategies, then
  * chooses the one that uses the least total film length.  This gives a much
@@ -761,5 +833,7 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
     return winner
   })
 
+  const rows = packRepeatedRows(units, maxHeightCm, canvasWidthCm, itemGapCm)
+  if (rows && isBetter(rows, { ...best, pages })) return { pages: rows.pages, unplaced: rows.unplaced, strategy: rows.name }
   return { pages, unplaced: best.unplaced, strategy: best.name + (compressed ? '/compactado' : '') }
 }

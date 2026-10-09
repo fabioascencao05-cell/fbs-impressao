@@ -184,3 +184,35 @@ describe('packImages', () => {
   })
 
 })
+
+
+describe('fileiras para artes repetidas — comparação Corel', () => {
+  it('encaixa 9 artes de 29,4 × 18,3 cm em três fileiras de três, em uma folha de 90 cm', () => {
+    const result = packImages([image('ministerio', 29.4, 18.3, 9)], 90, 57, 0.3)
+    expect(result.pages).toHaveLength(1)
+    expect(result.pages[0].items).toHaveLength(9)
+    expect(result.pages[0].usedHeightCm).toBeCloseTo(88.8)
+    expect(new Set(result.pages[0].items.map(item => item.yCm)).size).toBe(3)
+    expect(result.pages[0].items.every(item => item.angle === 90)).toBe(true)
+    expect(validateLayout(result.pages, 57, 90, 0.3)).toEqual([])
+  })
+
+  it('preserva a décima cópia e usa uma página curta sem retirar peças para imitar a referência de 9', () => {
+    const result = packImages([image('ministerio', 29.4, 18.3, 10)], 90, 57, 0.3)
+    expect(result.pages).toHaveLength(2)
+    expect(result.pages.map(page => page.items.length)).toEqual([9, 1])
+    expect(result.pages.reduce((sum, page) => sum + page.usedHeightCm, 0)).toBeCloseTo(107.1)
+    expect(result.pages[1].items[0].angle).toBe(0)
+    expect(validateLayout(result.pages, 57, 90, 0.3)).toEqual([])
+  })
+
+  it('em uma folha longa combina três fileiras giradas com uma fileira final baixa', () => {
+    const result = packImages([image('ministerio', 29.4, 18.3, 10)], 200, 57, 0.3)
+    expect(result.pages).toHaveLength(1)
+    expect(result.pages[0].items).toHaveLength(10)
+    expect(result.pages[0].usedHeightCm).toBeLessThanOrEqual(107.4 + 0.0001)
+    expect(validateLayout(result.pages, 57, 200, 0.3)).toEqual([])
+    expect(new Set(result.pages[0].items.map(item => item.id)).size).toBe(10)
+    for (const item of result.pages[0].items) expect([item.widthCm, item.heightCm]).toEqual([29.4, 18.3])
+  })
+})
