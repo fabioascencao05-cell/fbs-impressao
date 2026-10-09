@@ -271,7 +271,7 @@ describe('recálculo automático do consumo', () => {
   }
 
   it('aumentar só o canvas de 200 para 500 cm mantém posições e custo de R$ 40,70', () => {
-    const pages = [{ index: 0, usedHeightCm: 73.9, items: [placed('art-0', 'art', 63.9)] }]
+    const pages = [{ index: 0, usedHeightCm: 73.9, items: [{ ...placed('art-0', 'art', 0), heightCm: 73.9 }] }]
     useGangSheetStore.setState({ pages })
     expect(totals().cost).toBeCloseTo(40.7)
     useGangSheetStore.getState().setMaxHeightCm(500)
@@ -306,7 +306,7 @@ describe('recálculo automático do consumo', () => {
     useGangSheetStore.setState({ pages: [{ index: 0, items: [placed('art-0', 'art', 0)], usedHeightCm: 10 }] })
     const store = useGangSheetStore.getState()
     store.updatePlacedItem(0, 'art-0', { yCm: 20, widthCm: 15, angle: 45 })
-    expect(totals().lengthCm).toBeCloseTo(20 + 15 * Math.SQRT2 + 0.1)
+    expect(totals().lengthCm).toBeCloseTo(15 * Math.SQRT2 + 0.1)
     expect(totals().imageAreaCm2).toBe(225)
     store.duplicatePlacedItem(0, 'art-0')
     expect(totals().units).toBe(2)

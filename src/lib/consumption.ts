@@ -3,14 +3,16 @@ import { EXPORT_END_MARGIN_CM } from './constants'
 import { rotatedAabbCm } from './geometry'
 import { occupiedAreaCm2 } from './occupiedArea'
 
-/** Positions already include the leading margin and all inter-art gaps.
- * Only the technical trailing margin is added here, once per nonempty page.
+/** The PNG crops outer empty bands. Bill the same occupied vertical span,
+ * with internal gaps and the trailing margin, once per nonempty page.
  * Canvas height, preview/export options and cached usedHeightCm are NOT inputs.
  */
 export function consumedLengthCm(items: PlacedItem[], endMarginCm = EXPORT_END_MARGIN_CM): number {
   if (!items.length) return 0
-  return items.reduce((bottom, item) => Math.max(bottom,
-    item.yCm + rotatedAabbCm(item.widthCm, item.heightCm, item.angle).hCm), 0) + endMarginCm
+  const top = Math.min(...items.map(item => item.yCm))
+  const bottom = items.reduce((bottom, item) => Math.max(bottom,
+    item.yCm + rotatedAabbCm(item.widthCm, item.heightCm, item.angle).hCm), top)
+  return bottom - top + endMarginCm
 }
 
 export function requestedImageTotals(images: GangImage[]) {

@@ -2,12 +2,12 @@ import type { PackedPage, PlacedItem } from '@/types'
 import { EXPORT_END_MARGIN_CM, PRINT_DPI } from './constants'
 import { rotatedAabbCm } from './geometry'
 
-/** Same physical height for preview, statistics and PNG. Cropping is opt-in. */
+/** Canvas height for editing, or absolute bottom plus the final print margin. */
 export function sheetHeightCm(page: PackedPage, configuredHeightCm: number, trimHeight = false): number {
   if (!trimHeight) return configuredHeightCm
   const bottom = page.items.reduce((max, item) => Math.max(max,
     item.yCm + rotatedAabbCm(item.widthCm, item.heightCm, item.angle).hCm), 0)
-  return Math.min(configuredHeightCm, Math.max(0.1, bottom + EXPORT_END_MARGIN_CM))
+  return Math.max(0.1, bottom + EXPORT_END_MARGIN_CM)
 }
 
 /** At least 300 DPI, never fewer output pixels than any positioned original. */

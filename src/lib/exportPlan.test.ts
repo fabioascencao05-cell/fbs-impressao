@@ -77,4 +77,8 @@ describe('resolution and proportion protection', () => {
     expect(plan.widthPx).toBe(2401)
     expect(plan.heightPx).toBe(1440)
   })
+  it('keeps the final cutting margin even when art touches the last canvas row', () => {
+    const plan = planUsefulExport(page(), 57, 5)
+    expect(plan.heightPx / plan.pxPerCm).toBeCloseTo(5.1, 1)
+  })
 })
