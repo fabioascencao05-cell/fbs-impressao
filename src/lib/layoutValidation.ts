@@ -52,7 +52,7 @@ export function validateLayout(
     for (let first = 0; first < bounds.length; first++) {
       for (let second = first + 1; second < bounds.length; second++) {
         const a = bounds[first], b = bounds[second]
-        if (distanceBetween(a.bounds, b.bounds) >= Math.max(itemGapCm, EPSILON)) continue
+        if (distanceBetween(a.bounds, b.bounds) >= Math.max(itemGapCm - EPSILON, EPSILON)) continue
         let overlap = overlaps(a.bounds, b.bounds)
         let close = !overlap && itemGapCm > 0 && distanceBetween(a.bounds, b.bounds) < itemGapCm - EPSILON
         const irregular = a.item.occupancyMask || b.item.occupancyMask || a.item.angle % 90 || b.item.angle % 90

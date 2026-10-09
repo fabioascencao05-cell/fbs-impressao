@@ -41,4 +41,14 @@ describe('validateLayout', () => {
       expect.objectContaining({ type: 'overlap' }),
     ])
   })
+
+  it('não transforma arredondamento do espaço exato em aviso para contornos', () => {
+    const occupancyMask = { cols: 2, rows: 2, data: new Uint8Array([1, 1, 1, 0]) }
+    const first = { ...item('first', 29.7), yCm: 178.2, widthCm: 9, heightCm: 9.55, occupancyMask }
+    const second = { ...first, id: 'second', yCm: 188.04999999999998 }
+    const pages = [{ index: 0, items: [first, second], usedHeightCm: 197.6 }]
+    expect(validateLayout(pages, 57, 200, .3)).toEqual([])
+    expect(validateLayout([{ ...pages[0], items: [first, { ...second, yCm: second.yCm - .01 }] }], 57, 200, .3))
+      .toEqual([expect.objectContaining({ type: 'insufficient-gap' })])
+  })
 })

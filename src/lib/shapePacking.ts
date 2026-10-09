@@ -239,6 +239,58 @@ function compactAcrossPages(initial: PackingResult, width: number, height: numbe
   return winner
 }
 
+/** A last piece may need a swap, rather than an empty hole. Temporarily free a
+ * representative piece, place the tail, and reinsert the freed piece into the
+ * existing sheets. Publish the exchange only when the entire tail fits.
+ */
+function closeTailPage(initial: PackingResult, width: number, height: number,
+  neighbors: Array<[number, number]>): PackingResult {
+  const tail = initial.pages.at(-1)
+  if (!tail || initial.pages.length < 2 || tail.items.length > 4) return initial
+  const budget: Budget = { left: 24_000_000 }
+  const query = (page: GridPage, item: PlacedItem) => {
+    const allowance = Math.min(budget.left, 1_000_000), local = { left: allowance }
+    const fit = findFit(page, item, width, height, local, true, item.angle)
+    budget.left -= allowance - Math.max(0, local.left)
+    return fit
+  }
+  const insert = (fit: Fit, item: PlacedItem) => {
+    fit.page.items.push({ ...item, xCm: fit.x * CELL_CM, yCm: fit.y * CELL_CM, angle: fit.angle })
+    fit.page.usedHeightCm = Math.max(fit.page.usedHeightCm, fit.bottom)
+    stamp(fit.page, fit.shape, fit.x, fit.y, neighbors)
+  }
+  for (let targetIndex = 0; targetIndex < initial.pages.length - 1 && budget.left > 0; targetIndex++) {
+    const seen = new Set<string>()
+    const choices = [...initial.pages[targetIndex].items]
+      .sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
+      .filter(item => { if (seen.has(item.sourceImageId)) return false; seen.add(item.sourceImageId); return true })
+    for (const evicted of choices) {
+      if (budget.left <= 0) break
+      const pages = initial.pages.slice(0, -1).map((page, index) =>
+        gridFrom(page.items.filter(item => index !== targetIndex || item.id !== evicted.id), width, height, neighbors))
+      const queue = [...tail.items].sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
+      queue.push(evicted)
+      let complete = true
+      for (const item of queue) {
+        let best: Fit | null = null
+        for (const page of pages) {
+          const fit = query(page, item)
+          if (fit && (!best || Math.max(page.usedHeightCm, fit.bottom) - page.usedHeightCm
+            < Math.max(best.page.usedHeightCm, best.bottom) - best.page.usedHeightCm - 1e-8)) best = fit
+          if (budget.left <= 0) break
+        }
+        if (!best) { complete = false; break }
+        insert(best, item)
+      }
+      if (!complete) continue
+      const result: PackingResult = { ...initial, strategy: 'contornos/redistribuido',
+        pages: pages.map((page, index) => ({ index, items: page.items, usedHeightCm: page.usedHeightCm })) }
+      if (better(result, initial)) return result
+    }
+  }
+  return initial
+}
+
 /** Keep the rectangular solution unless a complete contour solution improves it.
  * All copies, including pieces rejected by the orthogonal packer, are searched.
  * Bounded work runs in a worker; cancellation never changes the current layout.
@@ -317,6 +369,7 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
   }
   winner = compactAcrossPages(winner, width, height, neighbors,
     done => onProgress?.((trials.length + 2) * units.length + done, total))
+  winner = closeTailPage(winner, width, height, neighbors)
   onProgress?.(total, total)
   return winner
 }
