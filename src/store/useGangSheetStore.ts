@@ -4,6 +4,7 @@ import type { packImages } from '@/lib/binPacking'
 import { rotatedAabbCm } from '@/lib/geometry'
 import { computeContentBox } from '@/lib/trimImage'
 import { readOccupancyMask } from '@/lib/shapeMask'
+import { readImageResolutionDpi } from '@/lib/imageResolution'
 import { defaultPrintWidthCm } from '@/lib/printQuality'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
@@ -26,10 +27,12 @@ interface GangSheetState {
   pages: PackedPage[]
   unplacedImages: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
   packingStrategy: string | null
+  layoutPending: boolean
+  packingError: string | null
   packingProgress: { done: number; total: number } | null
   zoom: number
   sheetBackgroundColor: string
-  costPerCm2: number
+  costPerMeter: number
 
   addImages: (files: File[]) => Promise<{ added: number; skipped: number }>
   removeImage: (id: string) => void
@@ -46,7 +49,7 @@ interface GangSheetState {
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
   setSheetBackgroundColor: (color: string) => void
-  setCostPerCm2: (cost: number) => void
+  setCostPerMeter: (cost: number) => void
   reset: () => void
 }
 
@@ -73,16 +76,33 @@ const clearedLayout = () => ({
   unplacedImages: [] as GangSheetState['unplacedImages'],
   packingStrategy: null,
   packingProgress: null,
+  layoutPending: false,
+  packingError: null,
 })
 
+let autoLayoutTimer: ReturnType<typeof setTimeout> | null = null
 let activeWorker: Worker | null = null
 let activeResolve: ((finished: boolean) => void) | null = null
 function stopWorker() {
+  if (autoLayoutTimer !== null) clearTimeout(autoLayoutTimer)
+  autoLayoutTimer = null
   activeWorker?.terminate()
   activeWorker = null
   const resolve = activeResolve
   activeResolve = null
   resolve?.(false)
+}
+
+// Debounce queue edits; geometry changes on the canvas only recalculate totals.
+function scheduleLayout() {
+  if (!useGangSheetStore.getState().images.length) return
+  useGangSheetStore.setState({ layoutPending: true, packingError: null })
+  autoLayoutTimer = setTimeout(() => {
+    autoLayoutTimer = null
+    void useGangSheetStore.getState().generateLayout().catch((error: unknown) => {
+      useGangSheetStore.setState({ packingError: error instanceof Error ? error.message : 'Falha ao otimizar.' })
+    })
+  }, 500)
 }
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
@@ -98,7 +118,9 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   packingProgress: null,
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
-  costPerCm2: 0,
+  costPerMeter: 55,
+  layoutPending: false,
+  packingError: null,
 
   addImages: async (files) => {
     const accepted = files.filter((f) => ACCEPTED_TYPES.has(f.type))
@@ -111,10 +133,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       const batch = await Promise.all(
         accepted.slice(start, start + 4).map(async (file): Promise<GangImage | null> => {
           try {
-            const box = await computeContentBox(file)
+            const [box, sourceDpi] = await Promise.all([computeContentBox(file), readImageResolutionDpi(file)])
             const occupancyMask = await readOccupancyMask(file, box)
             const aspectRatio = box.heightPx / box.widthPx
-            const widthCm = defaultPrintWidthCm(box.widthPx)
+            const widthCm = sourceDpi ? box.widthPx / sourceDpi * 2.54 : defaultPrintWidthCm(box.widthPx)
             const image: GangImage = {
               id: crypto.randomUUID(),
               file,
@@ -123,6 +145,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
               naturalHeightPx: box.naturalHeightPx,
               aspectRatio,
               quantity: 1,
+              sourceDpi,
               occupancyMask: occupancyMask ?? undefined,
               widthCm,
               heightCm: widthCm * aspectRatio,
@@ -141,8 +164,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       newImages.push(...batch.filter((image): image is GangImage => image !== null))
     }
 
+    if (!newImages.length) return { added: 0, skipped }
     stopWorker()
     set((state) => ({ images: [...state.images, ...newImages], ...clearedLayout() }))
+    scheduleLayout()
     return { added: newImages.length, skipped }
   },
 
@@ -164,8 +189,10 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         unplacedImages: state.unplacedImages.filter((it) => it.sourceImageId !== id),
         packingStrategy: null,
         packingProgress: null,
+        layoutPending: false,
       }
     })
+    if (!get().pages.length || get().unplacedImages.length) scheduleLayout()
   },
 
   updateQuantity: (id, quantity) => {
@@ -176,6 +203,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       ),
       ...clearedLayout(),
     }))
+    scheduleLayout()
   },
 
   updateWidthCm: (id, widthCm) => {
@@ -188,28 +216,39 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       ),
       ...clearedLayout(),
     }))
+    scheduleLayout()
   },
 
   setMaxHeightCm: (heightCm) => {
+    const state = get()
+    const next = finiteAtLeast(heightCm, 1, state.maxHeightCm)
+    if (next === state.maxHeightCm) return
     stopWorker()
-    set((state) => ({ maxHeightCm: finiteAtLeast(heightCm, 1, state.maxHeightCm), ...clearedLayout() }))
+    // Enlarging only empty workspace must preserve both manual positions and cost.
+    const fits = state.pages.some(page => page.items.length > 0)
+      && state.pages.every(page => computeUsedHeightCm(page.items) <= next)
+      && !state.unplacedImages.length && !state.layoutPending
+    set({ maxHeightCm: next, ...(fits ? { packingProgress: null } : clearedLayout()) })
+    if (!fits) scheduleLayout()
   },
 
   setCanvasWidthCm: (widthCm) => {
     stopWorker()
     set((state) => ({ canvasWidthCm: finiteAtLeast(widthCm, 1, state.canvasWidthCm), ...clearedLayout() }))
+    scheduleLayout()
   },
 
   setItemGapCm: (gapCm) => {
     stopWorker()
     set((state) => ({ itemGapCm: finiteAtLeast(gapCm, 0, state.itemGapCm), ...clearedLayout() }))
+    scheduleLayout()
   },
 
   generateLayout: () => {
     stopWorker()
     const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
     if (!images.length) { set(clearedLayout()); return Promise.resolve(false) }
-    set({ packingProgress: { done: 0, total: 1 } })
+    set({ packingProgress: { done: 0, total: 1 }, layoutPending: false, packingError: null })
     return new Promise<boolean>((resolve, reject) => {
       let worker: Worker
       try {
@@ -257,7 +296,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     })
   },
 
-  cancelPacking: () => { stopWorker(); set({ packingProgress: null }) },
+  cancelPacking: () => { stopWorker(); set({ packingProgress: null, layoutPending: false }) },
 
   updatePlacedItem: (pageIndex, itemId, patch) => {
     get().cancelPacking()
@@ -316,13 +355,13 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   setSheetBackgroundColor: (color) => set({ sheetBackgroundColor: color }),
 
-  setCostPerCm2: (cost) => set((state) => ({ costPerCm2: finiteAtLeast(cost, 0, state.costPerCm2) })),
+  setCostPerMeter: (cost) => set((state) => ({ costPerMeter: finiteAtLeast(cost, 0, state.costPerMeter) })),
 
   reset: () => {
     stopWorker()
     set((state) => {
       state.images.forEach((img) => URL.revokeObjectURL(img.previewUrl))
-      return { images: [], pages: [], unplacedImages: [], packingStrategy: null, packingProgress: null }
+      return { images: [], ...clearedLayout() }
     })
   },
 }))

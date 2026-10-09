@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useGangSheetStore } from './useGangSheetStore'
+import { calculateConsumption } from '@/lib/consumption'
 import type { GangImage, PlacedItem } from '@/types'
 
 function sourceImage(id: string): GangImage {
@@ -40,6 +41,7 @@ function placed(id: string, sourceImageId: string, yCm: number): PlacedItem {
 }
 
 describe('validade do layout DTF', () => {
+  afterEach(() => useGangSheetStore.getState().cancelPacking())
   beforeEach(() => {
     useGangSheetStore.setState({ images: [], pages: [], unplacedImages: [], packingStrategy: null })
   })
@@ -61,7 +63,7 @@ describe('validade do layout DTF', () => {
   it.each([
     ['quantidade', () => useGangSheetStore.getState().updateQuantity('art', 2)],
     ['largura da folha', () => useGangSheetStore.getState().setCanvasWidthCm(56)],
-    ['altura da página', () => useGangSheetStore.getState().setMaxHeightCm(80)],
+    ['altura insuficiente da página', () => useGangSheetStore.getState().setMaxHeightCm(5)],
     ['espaçamento', () => useGangSheetStore.getState().setItemGapCm(0.5)],
   ])('descarta o layout antigo quando muda %s', (_label, change) => {
     const art = sourceImage('art')
@@ -166,5 +168,72 @@ describe('otimização em segundo plano', () => {
     expect(useGangSheetStore.getState().pages).toBe(oldPages)
     expect(useGangSheetStore.getState().packingProgress).toBeNull()
     expect(worker.terminated).toBe(true)
+  })
+})
+
+
+describe('recálculo automático do consumo', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubGlobal('Worker', FakeWorker)
+    useGangSheetStore.setState({ images: [sourceImage('art')], pages: [], maxHeightCm: 200,
+      canvasWidthCm: 57, costPerMeter: 55, layoutPending: false, packingProgress: null, unplacedImages: [] })
+  })
+  afterEach(() => { useGangSheetStore.getState().cancelPacking(); vi.useRealTimers(); vi.unstubAllGlobals() })
+  const totals = () => {
+    const s = useGangSheetStore.getState()
+    return calculateConsumption(s.pages, s.canvasWidthCm, s.costPerMeter)
+  }
+
+  it('aumentar só o canvas de 200 para 500 cm mantém posições e custo de R$ 40,70', () => {
+    const pages = [{ index: 0, usedHeightCm: 73.9, items: [placed('art-0', 'art', 63.9)] }]
+    useGangSheetStore.setState({ pages })
+    expect(totals().cost).toBeCloseTo(40.7)
+    useGangSheetStore.getState().setMaxHeightCm(500)
+    expect(useGangSheetStore.getState().pages).toBe(pages)
+    expect(useGangSheetStore.getState().layoutPending).toBe(false)
+    expect(totals().cost).toBeCloseTo(40.7)
+    useGangSheetStore.getState().setTrimExportHeight(true)
+    expect(totals().cost).toBeCloseTo(40.7)
+    useGangSheetStore.getState().setTrimExportHeight(false)
+    expect(totals().cost).toBeCloseTo(40.7)
+  })
+
+  it('uma sequência de quantidade e tamanho dispara uma única otimização com as medidas finais', async () => {
+    useGangSheetStore.getState().updateQuantity('art', 3)
+    vi.advanceTimersByTime(250)
+    useGangSheetStore.getState().updateWidthCm('art', 20)
+    vi.advanceTimersByTime(499)
+    expect(useGangSheetStore.getState().packingProgress).toBeNull()
+    vi.advanceTimersByTime(1)
+    expect(FakeWorker.latest.input?.images[0]).toMatchObject({ quantity: 3, widthCm: 20, heightCm: 20 })
+    const items = [0, 20.3, 40.6].map((y, i) => ({ ...placed(`art-${i}`, 'art', y), widthCm: 20, heightCm: 20 }))
+    FakeWorker.latest.emit({ type: 'result', result: { pages: [{ index: 0, items, usedHeightCm: 60.6 }], unplaced: [], strategy: 'teste' } })
+    expect(totals().units).toBe(3)
+    expect(totals().imageAreaCm2).toBe(1200)
+    expect(totals().lengthCm).toBeCloseTo(60.7)
+  })
+
+  it('mover, redimensionar, girar, duplicar e remover recalcula a montagem atual', () => {
+    useGangSheetStore.setState({ pages: [{ index: 0, items: [placed('art-0', 'art', 0)], usedHeightCm: 10 }] })
+    const store = useGangSheetStore.getState()
+    store.updatePlacedItem(0, 'art-0', { yCm: 20, widthCm: 15, angle: 45 })
+    expect(totals().lengthCm).toBeCloseTo(20 + 15 * Math.SQRT2 + 0.1)
+    expect(totals().imageAreaCm2).toBe(225)
+    store.duplicatePlacedItem(0, 'art-0')
+    expect(totals().units).toBe(2)
+    expect(totals().imageAreaCm2).toBe(450)
+    store.removePlacedItem(0, 'art-0')
+    expect(totals().units).toBe(1)
+    store.removePage(0)
+    expect(totals().cost).toBe(0)
+  })
+
+  it('cancelar antes do debounce impede o início de uma busca automática', () => {
+    useGangSheetStore.getState().updateQuantity('art', 2)
+    useGangSheetStore.getState().cancelPacking()
+    vi.advanceTimersByTime(1000)
+    expect(useGangSheetStore.getState().packingProgress).toBeNull()
+    expect(useGangSheetStore.getState().layoutPending).toBe(false)
   })
 })

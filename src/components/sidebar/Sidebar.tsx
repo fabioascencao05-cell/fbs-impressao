@@ -1,5 +1,5 @@
-import { occupiedAreaCm2 } from '@/lib/occupiedArea'
-import { LayoutGrid, Download, X, Layers, ImageOff, Trash2, Gauge, Ruler, Sparkles } from 'lucide-react'
+import { calculateConsumption, requestedImageTotals } from '@/lib/consumption'
+import { LayoutGrid, Download, X, Layers, ImageOff, Trash2, Ruler, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -11,7 +11,6 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { downloadGangSheets } from '@/lib/exportCanvas'
 import { toast } from '@/hooks/use-toast'
 import { useMemo, useState } from 'react'
-import { sheetHeightCm } from '@/lib/exportPlan'
 import { validateLayout } from '@/lib/layoutValidation'
 
 interface SidebarProps {
@@ -28,9 +27,11 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const setCanvasWidthCm = useGangSheetStore((s) => s.setCanvasWidthCm)
   const itemGapCm = useGangSheetStore((s) => s.itemGapCm)
   const setItemGapCm = useGangSheetStore((s) => s.setItemGapCm)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
-  const setCostPerCm2 = useGangSheetStore((s) => s.setCostPerCm2)
+  const costPerMeter = useGangSheetStore((s) => s.costPerMeter)
+  const setCostPerMeter = useGangSheetStore((s) => s.setCostPerMeter)
   const packingProgress = useGangSheetStore((s) => s.packingProgress)
+  const layoutPending = useGangSheetStore((s) => s.layoutPending)
+  const packingError = useGangSheetStore((s) => s.packingError)
   const cancelPacking = useGangSheetStore((s) => s.cancelPacking)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const pages = useGangSheetStore((s) => s.pages)
@@ -44,17 +45,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
 
   const hasLayout = pages.some((p) => p.items.length > 0)
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
-  const layoutStats = useMemo(() => {
-    const visible = pages.filter((page) => page.items.length > 0)
-    const artArea = visible.flatMap((page) => page.items).reduce((sum, item) => sum + occupiedAreaCm2(item), 0)
-    const filmHeight = visible.reduce((sum, page) => sum + sheetHeightCm(page, maxHeightCm, trimExportHeight), 0)
-    const filmArea = canvasWidthCm * filmHeight
-    return {
-      pages: visible.length,
-      filmHeight,
-      efficiency: filmArea > 0 ? Math.min(100, (artArea / filmArea) * 100) : 0,
-    }
-  }, [canvasWidthCm, maxHeightCm, pages, trimExportHeight])
+  const layoutStats = useMemo(() => calculateConsumption(pages, canvasWidthCm, costPerMeter),
+    [pages, canvasWidthCm, costPerMeter])
+  const requested = useMemo(() => requestedImageTotals(images), [images])
 
   const handleGenerateLayout = async () => {
     try { if (!await generateLayout()) return } catch (error) {
@@ -150,7 +143,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 />
               </div>
               <div className="space-y-0.5">
-                <Label htmlFor="max-height">Comprimento (cm)</Label>
+                <Label htmlFor="max-height">Área de trabalho (cm)</Label>
                 <Input
                   id="max-height"
                   type="number"
@@ -175,44 +168,35 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 />
               </div>
               <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="cost-cm2" className="truncate" title="Custo por cm² (R$)">
-                  Custo/cm² (R$)
+                <Label htmlFor="cost-meter" className="truncate" title="Custo por metro linear (R$)">
+                  Custo/metro (R$)
                 </Label>
                 <Input
-                  id="cost-cm2"
+                  id="cost-meter"
                   type="number"
                   min={0}
                   step={0.01}
-                  value={costPerCm2 || ''}
+                  value={costPerMeter}
                   placeholder="0.00"
-                  onChange={(e) => setCostPerCm2(Number(e.target.value))}
+                  onChange={(e) => setCostPerMeter(Number(e.target.value))}
                 />
               </div>
             </div>
-            <p className="text-[10px] leading-relaxed text-muted-foreground">Cada folha terá {canvasWidthCm} × {maxHeightCm} cm ({(maxHeightCm / 100).toFixed(2)} m). Nova página somente quando as artes não couberem neste comprimento.</p>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">Área disponível: {canvasWidthCm} × {maxHeightCm} cm. O custo considera somente o comprimento ocupado, incluindo espaços e margem final de 0,1 cm.</p>
             <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
               <input type="checkbox" checked={trimExportHeight} onChange={(e) => setTrimExportHeight(e.target.checked)} />
-              Usar só altura ocupada (economizar filme)
+              Cortar sobra vazia no PNG (não altera o custo)
             </label>
           </div>
         </div>
 
-        {hasLayout && (
-          <div className="fbs-tool-card mx-4 rounded-2xl border border-primary/20 bg-primary/5 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-primary"><Gauge className="h-3.5 w-3.5" /> Aproveitamento</span>
-              <span className="text-sm font-bold tabular-nums text-primary">{Math.round(layoutStats.efficiency)}%</span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-primary/15">
-              <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${layoutStats.efficiency}%` }} />
-            </div>
-            <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-              <span>{layoutStats.pages} página(s)</span>
-              <span>{layoutStats.filmHeight.toFixed(1)} cm de filme</span>
-            </div>
-            {packingStrategy && <p className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground"><Sparkles className="h-3 w-3" /> Encaixe: {packingStrategy}</p>}
-          </div>
-        )}
+        <div className="fbs-tool-card mx-4 mb-3 rounded-2xl border border-primary/20 bg-primary/5 p-3 text-xs">
+          <p className="font-semibold text-primary">Medidas da fila</p>
+          <p className="mt-1 text-muted-foreground">{requested.units} estampa(s) · {requested.imageAreaCm2.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} cm²</p>
+          <p className="mt-1 text-[10px] text-muted-foreground">Soma de largura × altura × quantidade. A montagem pode ser ajustada individualmente.</p>
+          {hasLayout && <p className="mt-2 font-medium">Consumo da montagem: {layoutStats.lengthMeters.toLocaleString('pt-BR', { maximumFractionDigits: 4 })} m</p>}
+          {packingStrategy && <p className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground"><Sparkles className="h-3 w-3" /> Encaixe: {packingStrategy}</p>}
+        </div>
 
         <Separator />
 
@@ -259,6 +243,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
             {images.length} arte(s) · {totalUnits} cópia(s) para empacotar
           </p>
         )}
+        {packingError && <p role="alert" className="text-xs text-destructive">{packingError} Tente otimizar novamente.</p>}
         {unplacedImages.length > 0 && (
           <p className="rounded-md bg-destructive/10 px-2 py-1 text-center text-[11px] font-medium text-destructive">
             {unplacedImages.length} cópia(s) não couberam na folha atual.
@@ -270,12 +255,12 @@ export default function Sidebar({ onClose }: SidebarProps) {
           onClick={handleGenerateLayout}
         >
           <LayoutGrid className="h-4 w-4" />
-          {packingProgress ? `Otimizando ${Math.round(packingProgress.done / packingProgress.total * 100)}%...` : 'Otimizar encaixe'}
+          {packingProgress ? `Otimizando ${Math.round(packingProgress.done / packingProgress.total * 100)}%...` : layoutPending ? 'Aguardando alterações...' : 'Otimizar encaixe'}
         </Button>
         <p className="text-center text-[11px] text-muted-foreground">
           Busca espaços entre os contornos e giros em toda a volta, com ajuste fino de ângulo. Mantém medidas e espaço de corte.
         </p>
-        {packingProgress && <Button variant="outline" className="w-full" onClick={cancelPacking}>Cancelar otimização</Button>}
+        {(packingProgress || layoutPending) && <Button variant="outline" className="w-full" onClick={cancelPacking}>Cancelar otimização</Button>}
         {layoutIssues.length > 0 && <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300" role="status">
           {layoutIssues.some((issue) => issue.type === 'outside-sheet')
             ? 'Há uma arte fora da folha. Mova-a para dentro antes de baixar.'
@@ -284,7 +269,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
         <Button
           className="w-full"
           variant="secondary"
-          disabled={!hasLayout || isExporting || !!packingProgress || unplacedImages.length > 0}
+          disabled={!hasLayout || isExporting || !!packingProgress || layoutPending || unplacedImages.length > 0}
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />

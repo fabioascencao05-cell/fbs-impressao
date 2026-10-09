@@ -74,7 +74,7 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
               type="number"
               min={0.1}
               step={0.1}
-              value={image.widthCm}
+              value={Number(image.widthCm.toFixed(4))}
               onChange={(e) => updateWidthCm(image.id, Number(e.target.value))}
             />
           </div>
@@ -82,6 +82,9 @@ export default function ImageQueueItem({ image }: { image: GangImage }) {
         <p className="text-[11px] text-muted-foreground">
           Altura: {image.heightCm.toFixed(1)} cm · {image.naturalWidthPx}×{image.naturalHeightPx}px
         </p>
+        {!isVector && <p className="text-[10px] text-muted-foreground">
+          {image.sourceDpi ? `Resolução do arquivo: ${Math.round(image.sourceDpi)} DPI` : 'Sem resolução física válida: tamanho sugerido a 300 DPI.'} Medidas em cm editáveis.
+        </p>}
         <p
           className={`text-[11px] ${isPrintReady ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
           title={qualityHelp}

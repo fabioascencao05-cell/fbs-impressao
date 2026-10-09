@@ -1,4 +1,5 @@
-import { occupiedAreaCm2 } from '@/lib/occupiedArea'
+import { calculateConsumption } from '@/lib/consumption'
+import ConsumptionSummary from './ConsumptionSummary'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Layers, Trash2 } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
@@ -10,15 +11,6 @@ import Ruler from './Ruler'
 import CanvasPage, { type SelectionInfo } from './CanvasPage'
 import CanvasToolbar from './CanvasToolbar'
 import { toast } from '@/hooks/use-toast'
-import type { PackedPage } from '@/types'
-
-function sheetEfficiency(page: PackedPage, canvasWidthCm: number): number {
-  if (page.usedHeightCm <= 0) return 0
-  const usedArea = page.items.reduce((sum, it) => sum + occupiedAreaCm2(it), 0)
-  const regionArea = canvasWidthCm * page.usedHeightCm
-  return regionArea > 0 ? Math.min(1, usedArea / regionArea) : 0
-}
-
 export default function CanvasWorkspace() {
   const pages = useGangSheetStore((s) => s.pages)
   const trimExportHeight = useGangSheetStore((s) => s.trimExportHeight)
@@ -30,7 +22,7 @@ export default function CanvasWorkspace() {
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
   const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
-  const costPerCm2 = useGangSheetStore((s) => s.costPerCm2)
+  const costPerMeter = useGangSheetStore((s) => s.costPerMeter)
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -157,6 +149,7 @@ export default function CanvasWorkspace() {
 
   return (
     <main className="fbs-canvas flex flex-1 flex-col overflow-hidden">
+      <ConsumptionSummary />
       {visiblePages.length > 0 && (
         <CanvasToolbar
           zoom={zoom}
@@ -210,12 +203,9 @@ export default function CanvasWorkspace() {
           >
             {visiblePages.map((page) => {
               const sheetHeightCm = exportSheetHeightCm(page, maxHeightCm, trimExportHeight)
-              const eff = sheetEfficiency(page, canvasWidthCm)
+              const consumption = calculateConsumption([page], canvasWidthCm, costPerMeter)
+              const eff = consumption.efficiency / 100
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
-              // DTF é cobrado pelo filme consumido (largura da folha × altura
-              // usada), não só pela área das artes — os espaços também gastam filme.
-              const filmAreaCm2 = canvasWidthCm * sheetHeightCm
-              const pageCost = costPerCm2 > 0 ? filmAreaCm2 * costPerCm2 : 0
               return (
                 <div key={page.index} className="flex flex-col">
                   <div className="fbs-tool-card mb-2 flex w-full items-center justify-between gap-4 rounded-xl border bg-card/70 px-3 py-1.5">
@@ -226,14 +216,14 @@ export default function CanvasWorkspace() {
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-muted-foreground">
                         {canvasWidthCm}cm × {sheetHeightCm.toFixed(1)}cm · usado{' '}
-                        {page.usedHeightCm.toFixed(1)}cm
+                        {consumption.lengthCm.toFixed(2)}cm
                       </span>
                       <Badge variant={effVariant} title="Área estimada pelos contornos das artes sobre o filme usado">
                         {Math.round(eff * 100)}% aproveitado
                       </Badge>
-                      {pageCost > 0 && (
-                        <Badge variant="outline" title="Custo do filme usado (largura × altura usada × custo/cm²)">
-                          R$ {pageCost.toFixed(2)}
+                      {consumption.cost >= 0 && (
+                        <Badge variant="outline" title="Comprimento realmente consumido ÷ 100 × custo por metro">
+                          {consumption.cost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                         </Badge>
                       )}
                       <Button

@@ -12,6 +12,7 @@ export interface GangImage {
   naturalHeightPx: number
   aspectRatio: number // trimmed content height / width
   occupancyMask?: OccupancyMask
+  sourceDpi?: number
   quantity: number
   widthCm: number
   heightCm: number
