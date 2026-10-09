@@ -1,12 +1,10 @@
-import { packImages } from './binPacking'
-import { packImagesByShape } from './shapePacking'
-import type { GangImage } from '@/types'
+import { optimizeLayout } from './optimizeLayout'
+import type { GangImage, PackedPage } from '@/types'
 
-self.onmessage = (event: MessageEvent<{ images: GangImage[]; maxHeightCm: number; canvasWidthCm: number; itemGapCm: number }>) => {
+self.onmessage = (event: MessageEvent<{ images: GangImage[]; maxHeightCm: number; canvasWidthCm: number; itemGapCm: number; currentPages?: PackedPage[] }>) => {
   try {
-    const { images, maxHeightCm, canvasWidthCm, itemGapCm } = event.data
-    const baseline = packImages(images, maxHeightCm, canvasWidthCm, itemGapCm)
-    const result = packImagesByShape(images, baseline, canvasWidthCm, maxHeightCm, itemGapCm,
+    const { images, maxHeightCm, canvasWidthCm, itemGapCm, currentPages } = event.data
+    const result = optimizeLayout(images, maxHeightCm, canvasWidthCm, itemGapCm, currentPages,
       (done, total) => self.postMessage({ type: 'progress', done, total }))
     self.postMessage({ type: 'result', result })
   } catch (error) {

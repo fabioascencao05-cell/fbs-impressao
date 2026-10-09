@@ -177,7 +177,7 @@ describe('recálculo automático do consumo', () => {
     vi.useFakeTimers()
     vi.stubGlobal('Worker', FakeWorker)
     useGangSheetStore.setState({ images: [sourceImage('art')], pages: [], maxHeightCm: 200,
-      canvasWidthCm: 57, costPerMeter: 55, layoutPending: false, packingProgress: null, unplacedImages: [] })
+      canvasWidthCm: 57, costPerMeter: 55, packingProgress: null, unplacedImages: [] })
   })
   afterEach(() => { useGangSheetStore.getState().cancelPacking(); vi.useRealTimers(); vi.unstubAllGlobals() })
   const totals = () => {
@@ -191,7 +191,6 @@ describe('recálculo automático do consumo', () => {
     expect(totals().cost).toBeCloseTo(40.7)
     useGangSheetStore.getState().setMaxHeightCm(500)
     expect(useGangSheetStore.getState().pages).toBe(pages)
-    expect(useGangSheetStore.getState().layoutPending).toBe(false)
     expect(totals().cost).toBeCloseTo(40.7)
     useGangSheetStore.getState().setTrimExportHeight(true)
     expect(totals().cost).toBeCloseTo(40.7)
@@ -199,16 +198,20 @@ describe('recálculo automático do consumo', () => {
     expect(totals().cost).toBeCloseTo(40.7)
   })
 
-  it('uma sequência de quantidade e tamanho dispara uma única otimização com as medidas finais', async () => {
+  it('quantidade e medida só iniciam uma busca quando o usuário solicita', async () => {
+    const createWorker = vi.fn(function () { return new FakeWorker() })
+    vi.stubGlobal('Worker', createWorker)
     useGangSheetStore.getState().updateQuantity('art', 3)
-    vi.advanceTimersByTime(250)
     useGangSheetStore.getState().updateWidthCm('art', 20)
-    vi.advanceTimersByTime(499)
+    vi.advanceTimersByTime(5000)
+    expect(createWorker).not.toHaveBeenCalled()
     expect(useGangSheetStore.getState().packingProgress).toBeNull()
-    vi.advanceTimersByTime(1)
+    const task = useGangSheetStore.getState().generateLayout()
+    expect(createWorker).toHaveBeenCalledTimes(1)
     expect(FakeWorker.latest.input?.images[0]).toMatchObject({ quantity: 3, widthCm: 20, heightCm: 20 })
     const items = [0, 20.3, 40.6].map((y, i) => ({ ...placed(`art-${i}`, 'art', y), widthCm: 20, heightCm: 20 }))
     FakeWorker.latest.emit({ type: 'result', result: { pages: [{ index: 0, items, usedHeightCm: 60.6 }], unplaced: [], strategy: 'teste' } })
+    expect(await task).toBe(true)
     expect(totals().units).toBe(3)
     expect(totals().imageAreaCm2).toBe(1200)
     expect(totals().lengthCm).toBeCloseTo(60.7)
@@ -229,11 +232,13 @@ describe('recálculo automático do consumo', () => {
     expect(totals().cost).toBe(0)
   })
 
-  it('cancelar antes do debounce impede o início de uma busca automática', () => {
+  it('configurar folha e espaçamento nunca inicia uma busca sem o clique', () => {
     useGangSheetStore.getState().updateQuantity('art', 2)
-    useGangSheetStore.getState().cancelPacking()
-    vi.advanceTimersByTime(1000)
+    useGangSheetStore.getState().setItemGapCm(0.2)
+    useGangSheetStore.getState().setCanvasWidthCm(57)
+    useGangSheetStore.getState().setMaxHeightCm(300)
+    vi.advanceTimersByTime(5000)
+    expect(useGangSheetStore.getState().pages).toEqual([])
     expect(useGangSheetStore.getState().packingProgress).toBeNull()
-    expect(useGangSheetStore.getState().layoutPending).toBe(false)
   })
 })

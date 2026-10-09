@@ -8,7 +8,7 @@ export default function ConsumptionSummary() {
   const pages = useGangSheetStore(s => s.pages)
   const width = useGangSheetStore(s => s.canvasWidthCm)
   const price = useGangSheetStore(s => s.costPerMeter)
-  const pending = useGangSheetStore(s => s.layoutPending || !!s.packingProgress)
+  const pending = useGangSheetStore(s => !!s.packingProgress)
   const unplaced = useGangSheetStore(s => s.unplacedImages.length)
   const hasImages = useGangSheetStore(s => s.images.length > 0)
   const stats = useMemo(() => calculateConsumption(pages, width, price), [pages, width, price])

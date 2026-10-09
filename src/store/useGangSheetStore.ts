@@ -27,7 +27,6 @@ interface GangSheetState {
   pages: PackedPage[]
   unplacedImages: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
   packingStrategy: string | null
-  layoutPending: boolean
   packingError: string | null
   packingProgress: { done: number; total: number } | null
   zoom: number
@@ -76,33 +75,17 @@ const clearedLayout = () => ({
   unplacedImages: [] as GangSheetState['unplacedImages'],
   packingStrategy: null,
   packingProgress: null,
-  layoutPending: false,
   packingError: null,
 })
 
-let autoLayoutTimer: ReturnType<typeof setTimeout> | null = null
 let activeWorker: Worker | null = null
 let activeResolve: ((finished: boolean) => void) | null = null
 function stopWorker() {
-  if (autoLayoutTimer !== null) clearTimeout(autoLayoutTimer)
-  autoLayoutTimer = null
   activeWorker?.terminate()
   activeWorker = null
   const resolve = activeResolve
   activeResolve = null
   resolve?.(false)
-}
-
-// Debounce queue edits; geometry changes on the canvas only recalculate totals.
-function scheduleLayout() {
-  if (!useGangSheetStore.getState().images.length) return
-  useGangSheetStore.setState({ layoutPending: true, packingError: null })
-  autoLayoutTimer = setTimeout(() => {
-    autoLayoutTimer = null
-    void useGangSheetStore.getState().generateLayout().catch((error: unknown) => {
-      useGangSheetStore.setState({ packingError: error instanceof Error ? error.message : 'Falha ao otimizar.' })
-    })
-  }, 500)
 }
 
 export const useGangSheetStore = create<GangSheetState>((set, get) => ({
@@ -119,7 +102,6 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
   zoom: 1,
   sheetBackgroundColor: '#ffffff',
   costPerMeter: 55,
-  layoutPending: false,
   packingError: null,
 
   addImages: async (files) => {
@@ -167,7 +149,6 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     if (!newImages.length) return { added: 0, skipped }
     stopWorker()
     set((state) => ({ images: [...state.images, ...newImages], ...clearedLayout() }))
-    scheduleLayout()
     return { added: newImages.length, skipped }
   },
 
@@ -189,10 +170,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         unplacedImages: state.unplacedImages.filter((it) => it.sourceImageId !== id),
         packingStrategy: null,
         packingProgress: null,
-        layoutPending: false,
       }
     })
-    if (!get().pages.length || get().unplacedImages.length) scheduleLayout()
   },
 
   updateQuantity: (id, quantity) => {
@@ -203,7 +182,6 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       ),
       ...clearedLayout(),
     }))
-    scheduleLayout()
   },
 
   updateWidthCm: (id, widthCm) => {
@@ -216,7 +194,6 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       ),
       ...clearedLayout(),
     }))
-    scheduleLayout()
   },
 
   setMaxHeightCm: (heightCm) => {
@@ -227,33 +204,30 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     // Enlarging only empty workspace must preserve both manual positions and cost.
     const fits = state.pages.some(page => page.items.length > 0)
       && state.pages.every(page => computeUsedHeightCm(page.items) <= next)
-      && !state.unplacedImages.length && !state.layoutPending
+      && !state.unplacedImages.length
     set({ maxHeightCm: next, ...(fits ? { packingProgress: null } : clearedLayout()) })
-    if (!fits) scheduleLayout()
   },
 
   setCanvasWidthCm: (widthCm) => {
     stopWorker()
     set((state) => ({ canvasWidthCm: finiteAtLeast(widthCm, 1, state.canvasWidthCm), ...clearedLayout() }))
-    scheduleLayout()
   },
 
   setItemGapCm: (gapCm) => {
     stopWorker()
     set((state) => ({ itemGapCm: finiteAtLeast(gapCm, 0, state.itemGapCm), ...clearedLayout() }))
-    scheduleLayout()
   },
 
   generateLayout: () => {
     stopWorker()
-    const { images, maxHeightCm, canvasWidthCm, itemGapCm } = get()
+    const { images, maxHeightCm, canvasWidthCm, itemGapCm, pages } = get()
     if (!images.length) { set(clearedLayout()); return Promise.resolve(false) }
-    set({ packingProgress: { done: 0, total: 1 }, layoutPending: false, packingError: null })
+    set({ packingProgress: { done: 0, total: 1 }, packingError: null })
     return new Promise<boolean>((resolve, reject) => {
       let worker: Worker
       try {
         worker = new Worker(new URL('../lib/packing.worker.ts', import.meta.url), { type: 'module' })
-      } catch (error) { set({ packingProgress: null }); reject(error); return }
+      } catch (error) { set({ packingProgress: null, packingError: error instanceof Error ? error.message : 'Falha ao otimizar.' }); reject(error); return }
       activeWorker = worker
       activeResolve = resolve
       worker.onmessage = (event: MessageEvent<{ type: string; done?: number; total?: number; result?: ReturnType<typeof packImages>; message?: string }>) => {
@@ -286,7 +260,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       // Files are only decoded on upload. The worker needs geometry and alpha,
       // not another structured clone of every original image file.
       try {
-        worker.postMessage({ images: images.map(image => ({ ...image, file: undefined })), maxHeightCm, canvasWidthCm, itemGapCm })
+        worker.postMessage({ images: images.map(image => ({ ...image, file: undefined })), maxHeightCm, canvasWidthCm, itemGapCm, currentPages: pages })
       } catch (error) {
         activeResolve = null
         stopWorker()
@@ -296,7 +270,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     })
   },
 
-  cancelPacking: () => { stopWorker(); set({ packingProgress: null, layoutPending: false }) },
+  cancelPacking: () => { stopWorker(); set({ packingProgress: null }) },
 
   updatePlacedItem: (pageIndex, itemId, patch) => {
     get().cancelPacking()

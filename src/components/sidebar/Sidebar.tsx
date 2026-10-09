@@ -30,7 +30,6 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const costPerMeter = useGangSheetStore((s) => s.costPerMeter)
   const setCostPerMeter = useGangSheetStore((s) => s.setCostPerMeter)
   const packingProgress = useGangSheetStore((s) => s.packingProgress)
-  const layoutPending = useGangSheetStore((s) => s.layoutPending)
   const packingError = useGangSheetStore((s) => s.packingError)
   const cancelPacking = useGangSheetStore((s) => s.cancelPacking)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
@@ -255,12 +254,12 @@ export default function Sidebar({ onClose }: SidebarProps) {
           onClick={handleGenerateLayout}
         >
           <LayoutGrid className="h-4 w-4" />
-          {packingProgress ? `Otimizando ${Math.round(packingProgress.done / packingProgress.total * 100)}%...` : layoutPending ? 'Aguardando alterações...' : 'Otimizar encaixe'}
+          {packingProgress ? `Otimizando ${Math.round(packingProgress.done / packingProgress.total * 100)}%...` : 'Otimizar encaixe'}
         </Button>
         <p className="text-center text-[11px] text-muted-foreground">
-          Busca espaços entre os contornos e giros em toda a volta, com ajuste fino de ângulo. Mantém medidas e espaço de corte.
+          Otimiza somente ao clicar. Compara metragem, giros e contornos, remove faixas vazias e mantém as medidas e o espaço de corte.
         </p>
-        {(packingProgress || layoutPending) && <Button variant="outline" className="w-full" onClick={cancelPacking}>Cancelar otimização</Button>}
+        {packingProgress && <Button variant="outline" className="w-full" onClick={cancelPacking}>Cancelar otimização</Button>}
         {layoutIssues.length > 0 && <p className="rounded-md bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300" role="status">
           {layoutIssues.some((issue) => issue.type === 'outside-sheet')
             ? 'Há uma arte fora da folha. Mova-a para dentro antes de baixar.'
@@ -269,7 +268,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
         <Button
           className="w-full"
           variant="secondary"
-          disabled={!hasLayout || isExporting || !!packingProgress || layoutPending || unplacedImages.length > 0}
+          disabled={!hasLayout || isExporting || !!packingProgress || unplacedImages.length > 0}
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />

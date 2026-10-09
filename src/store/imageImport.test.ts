@@ -9,17 +9,24 @@ vi.mock('@/lib/trimImage', () => ({ computeContentBox: vi.fn().mockResolvedValue
 }) }))
 vi.mock('@/lib/shapeMask', () => ({ readOccupancyMask: vi.fn().mockResolvedValue(null) }))
 
-beforeEach(() => { vi.useFakeTimers(); useGangSheetStore.getState().reset() })
-afterEach(() => { useGangSheetStore.getState().reset(); vi.useRealTimers() })
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.stubGlobal('Worker', vi.fn(() => ({ postMessage: vi.fn(), terminate: vi.fn() })))
+  useGangSheetStore.getState().reset()
+})
+afterEach(() => { useGangSheetStore.getState().reset(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
-it('importa a medida física do PNG e agenda o encaixe automaticamente', async () => {
+it('importa a medida física do PNG sem iniciar o encaixe', async () => {
   const data = new ArrayBuffer(29), view = new DataView(data)
   view.setUint32(0, 0x89504e47); view.setUint32(4, 0x0d0a1a0a)
   view.setUint32(8, 9); view.setUint32(12, 0x70485973)
   view.setUint32(16, 10000); view.setUint32(20, 10000); view.setUint8(24, 1)
   await useGangSheetStore.getState().addImages([new File([data], '10x5.png', { type: 'image/png' })])
   const state = useGangSheetStore.getState(), image = state.images[0]
-  expect(state.layoutPending).toBe(true)
+  vi.advanceTimersByTime(1000)
+  expect(Worker).not.toHaveBeenCalled()
+  expect(state.packingProgress).toBeNull()
+  expect(state.pages).toEqual([])
   expect(image.sourceDpi).toBe(254)
   expect(image.widthCm).toBe(10)
   expect(image.heightCm).toBe(5)
@@ -28,7 +35,7 @@ it('importa a medida física do PNG e agenda o encaixe automaticamente', async (
   state.updateQuantity(image.id, 3)
   expect(requestedImageTotals(useGangSheetStore.getState().images)).toEqual({ units: 3, imageAreaCm2: 600 })
   state.removeImage(image.id)
-  expect(useGangSheetStore.getState().layoutPending).toBe(false)
+  expect(useGangSheetStore.getState().packingProgress).toBeNull()
   expect(requestedImageTotals(useGangSheetStore.getState().images)).toEqual({ units: 0, imageAreaCm2: 0 })
 })
 
