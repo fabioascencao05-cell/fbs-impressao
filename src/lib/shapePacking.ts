@@ -9,6 +9,7 @@ interface GridPage {
   rows: number
   items: PlacedItem[]
   usedHeightCm: number
+  reservedBottomRow: number
 }
 interface Fit { page: GridPage; x: number; y: number; angle: number; shape: Shape; bottom: number }
 interface Budget { left: number }
@@ -16,27 +17,47 @@ interface Budget { left: number }
 function newPage(width: number, height: number): GridPage {
   const stride = Math.ceil(Math.ceil(width / CELL_CM) / 32)
   const rows = Math.ceil(height / CELL_CM)
-  return { words: new Uint32Array(stride * rows), stride, rows, items: [], usedHeightCm: 0 }
+  return { words: new Uint32Array(stride * rows), stride, rows, items: [], usedHeightCm: 0, reservedBottomRow: 0 }
+}
+
+const collisionOrder = new WeakMap<Shape, Uint32Array>()
+function occupiedWords(shape: Shape): Uint32Array {
+  const cached = collisionOrder.get(shape)
+  if (cached) return cached
+  const countBits = (word: number) => {
+    word -= (word >>> 1) & 0x55555555
+    word = (word & 0x33333333) + ((word >>> 2) & 0x33333333)
+    return (((word + (word >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24
+  }
+  const indexes: number[] = []
+  for (let i = 0; i < shape.words.length; i++) if (shape.words[i]) indexes.push(i)
+  // Dense parts reject collisions first. Empty words in transparent corners
+  // must not exhaust the search budget before later pages can be revisited.
+  indexes.sort((a, b) => countBits(shape.words[b]) - countBits(shape.words[a])
+    || Math.abs(Math.floor(a / shape.stride) - shape.rows / 2) - Math.abs(Math.floor(b / shape.stride) - shape.rows / 2))
+  const order = Uint32Array.from(indexes)
+  collisionOrder.set(shape, order)
+  return order
 }
 
 // Compare 32 occupied cells at once, rather than one alpha pixel at a time.
 function fits(page: GridPage, shape: Shape, x: number, y: number, budget: Budget): boolean {
+  if (--budget.left < 0) return false
+  if (y >= page.reservedBottomRow) return true
   const wordX = x >>> 5, shift = x & 31
-  for (let row = 0; row < shape.rows; row++) {
-    const base = (y + row) * page.stride + wordX
-    for (let w = 0; w < shape.stride; w++) {
-      if (--budget.left < 0) return false
-      const bits = shape.words[row * shape.stride + w]
-      if (!bits) continue
-      if (page.words[base + w] & (bits << shift)) return false
-      if (shift && wordX + w + 1 < page.stride && page.words[base + w + 1] & (bits >>> (32 - shift))) return false
-    }
+  for (const index of occupiedWords(shape)) {
+    if (--budget.left < 0) return false
+    const row = Math.floor(index / shape.stride), w = index % shape.stride
+    const base = (y + row) * page.stride + wordX + w, bits = shape.words[index]
+    if (page.words[base] & (bits << shift)) return false
+    if (shift && wordX + w + 1 < page.stride && page.words[base + 1] & (bits >>> (32 - shift))) return false
   }
   return true
 }
 
 function stamp(page: GridPage, shape: Shape, x: number, y: number, neighbors: Array<[number, number]>) {
   for (const [dx, dy] of neighbors) {
+    page.reservedBottomRow = Math.max(page.reservedBottomRow, Math.min(page.rows, y + shape.rows + dy))
     const startX = x + dx, wordX = Math.floor(startX / 32), shift = ((startX % 32) + 32) % 32
     for (let row = 0; row < shape.rows; row++) {
       const gy = y + row + dy
@@ -48,6 +69,25 @@ function stamp(page: GridPage, shape: Shape, x: number, y: number, neighbors: Ar
       }
     }
   }
+}
+
+function stampItem(page: GridPage, item: PlacedItem, neighbors: Array<[number, number]>) {
+  const shape = shapeFor(item.occupancyMask, item.widthCm, item.heightCm, item.angle)
+  const x = item.xCm / CELL_CM, y = item.yCm / CELL_CM
+  // MaxRects positions can fall between grid cells. Reserve both translated
+  // cells, exactly as independent layout validation does for manual positions.
+  for (const gx of new Set([Math.floor(x + 1e-8), Math.ceil(x - 1e-8)]))
+    for (const gy of new Set([Math.floor(y + 1e-8), Math.ceil(y - 1e-8)])) stamp(page, shape, gx, gy, neighbors)
+}
+
+function gridFrom(items: PlacedItem[], width: number, height: number, neighbors: Array<[number, number]>): GridPage {
+  const page = newPage(width, height)
+  page.items = items
+  for (const item of items) {
+    page.usedHeightCm = Math.max(page.usedHeightCm, item.yCm + rotatedAabbCm(item.widthCm, item.heightCm, item.angle).hCm)
+    stampItem(page, item, neighbors)
+  }
+  return page
 }
 
 function anglesFor(item: PlacedItem, width: number, height: number): number[] {
@@ -74,7 +114,8 @@ function anglesFor(item: PlacedItem, width: number, height: number): number[] {
   return [...new Set(angles.map(a => Math.round(((a % 360) + 360) % 360 * 1e6) / 1e6))]
 }
 
-function findFit(page: GridPage, item: PlacedItem, width: number, height: number, budget: Budget, angular: boolean): Fit | null {
+function findFit(page: GridPage, item: PlacedItem, width: number, height: number, budget: Budget, angular: boolean,
+  preferredAngle?: number): Fit | null {
   let best: Fit | null = null
   const testAngle = (angle: number, step: number) => {
     const box = rotatedAabbCm(item.widthCm, item.heightCm, angle)
@@ -87,10 +128,14 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
     const lastY = Math.min(maxY, best ? Math.floor((best.bottom - box.hCm + 1e-8) / CELL_CM) : maxY)
     // First place an empty page at the origin. On populated pages search the
     // whole width, including cavities, then refine to a one-millimetre grid.
-    for (let y = 0; y <= lastY && foundY < 0 && budget.left > 0; y += step) {
-      for (let x = 0; x <= maxX && budget.left > 0; x += step) {
-        if (fits(page, shape, x, y, budget)) { foundY = y; foundX = x; break }
+    for (let y = 0; foundY < 0 && budget.left > 0; y += step) {
+      const scanY = Math.min(y, lastY)
+      for (let x = 0; budget.left > 0; x += step) {
+        const scanX = Math.min(x, maxX)
+        if (fits(page, shape, scanX, scanY, budget)) { foundY = scanY; foundX = scanX; break }
+        if (x >= maxX) break
       }
+      if (y >= lastY) break
     }
     if (foundY < 0) return
     if (step > 1) {
@@ -106,6 +151,7 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
       best = { page, x: foundX, y: foundY, angle, shape, bottom }
   }
   const angles = angular ? anglesFor(item, width, height) : [0, 90, 180, 270]
+  if (preferredAngle !== undefined && !angles.includes(preferredAngle)) angles.unshift(preferredAngle)
   for (const angle of angles) {
     testAngle(angle, page.items.length ? 3 : 1)
     const current = best as Fit | null
@@ -123,12 +169,126 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
 }
 
 function score(result: PackingResult): number[] {
-  return [result.unplaced.length, result.pages.length, result.pages.reduce((sum, page) => sum + page.usedHeightCm, 0)]
+  return [result.unplaced.length, result.pages.length, result.pages.reduce((sum, page) => sum + page.usedHeightCm, 0),
+    // Equal-length transfers still matter: pulling a non-bottom piece forward
+    // frees the last sheet so a following move can actually close that sheet.
+    result.pages.reduce((sum, page, index) => sum + index * page.items.reduce((area, item) => area + item.widthCm * item.heightCm, 0), 0),
+    result.pages.reduce((sum, page) => sum + page.items.reduce((bottoms, item) =>
+      bottoms + item.yCm + rotatedAabbCm(item.widthCm, item.heightCm, item.angle).hCm, 0), 0)]
 }
 function better(candidate: PackingResult, baseline: PackingResult): boolean {
   const a = score(candidate), b = score(baseline)
   for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 1e-8) return a[i] < b[i]
   return false
+}
+
+/** Reinsert individual pieces from the last sheets into earlier cavities.
+ * Each accepted move is already a complete layout: running out of work leaves
+ * those gains intact instead of discarding a partially completed full repack.
+ */
+function compactAcrossPages(initial: PackingResult, width: number, height: number,
+  neighbors: Array<[number, number]>, onProgress?: (done: number) => void): PackingResult {
+  let winner = initial
+  const count = initial.pages.reduce((n, page) => n + page.items.length, 0)
+  const budget: Budget = { left: Math.min(120_000_000, Math.max(12_000_000,
+    count * 1_000_000)) }
+  for (let pass = 0; pass < 2 && budget.left > 0; pass++) {
+    let changed = false
+    const order = winner.pages.flatMap((page, pageIndex) => page.items.map(item => ({ item, pageIndex })))
+      .sort((a, b) => b.pageIndex - a.pageIndex
+        || (b.item.yCm + rotatedAabbCm(b.item.widthCm, b.item.heightCm, b.item.angle).hCm)
+          - (a.item.yCm + rotatedAabbCm(a.item.widthCm, a.item.heightCm, a.item.angle).hCm))
+    for (const [index, { item }] of order.entries()) {
+      if (budget.left <= 0) break
+      const sourceIndex = winner.pages.findIndex(page => page.items.some(placed => placed.id === item.id))
+      if (sourceIndex < 0) continue
+      const source = winner.pages[sourceIndex]
+      const rest = source.items.filter(placed => placed.id !== item.id)
+      const sourceGrid = gridFrom(rest, width, height, neighbors)
+      let best = winner
+      for (let targetIndex = 0; targetIndex <= sourceIndex && budget.left > 0; targetIndex++) {
+        const target = winner.pages[targetIndex]
+        const grid = targetIndex === sourceIndex ? sourceGrid : gridFrom(target.items, width, height, neighbors)
+        // Earlier sheets may grow when that closes a later sheet; otherwise
+        // limit the search to moves that can reduce the total used length.
+        const released = source.usedHeightCm - sourceGrid.usedHeightCm
+        const maxHeight = targetIndex === sourceIndex ? source.usedHeightCm
+          : rest.length ? Math.min(height, target.usedHeightCm + released) : height
+        const allowance = Math.min(budget.left, 2_000_000)
+        const local = { left: allowance }
+        const fit = findFit(grid, item, width, maxHeight, local, true, item.angle)
+        budget.left -= allowance - Math.max(0, local.left)
+        if (!fit) continue
+        const moved = { ...item, xCm: fit.x * CELL_CM, yCm: fit.y * CELL_CM, angle: fit.angle }
+        const candidate: PackingResult = {
+          ...winner,
+          pages: winner.pages.map((page, index) => {
+            if (index === targetIndex) return { ...page, items: [...grid.items, moved], usedHeightCm: Math.max(grid.usedHeightCm, fit.bottom) }
+            if (index === sourceIndex) return { ...page, items: rest, usedHeightCm: sourceGrid.usedHeightCm }
+            return page
+          }).filter(page => page.items.length).map((page, index) => ({ ...page, index })),
+          strategy: 'contornos/redistribuido',
+        }
+        if (better(candidate, best)) best = candidate
+      }
+      if (best !== winner) { winner = best; changed = true }
+      onProgress?.(pass * count + index + 1)
+    }
+    if (!changed) break
+  }
+  return winner
+}
+
+/** A last piece may need a swap, rather than an empty hole. Temporarily free a
+ * representative piece, place the tail, and reinsert the freed piece into the
+ * existing sheets. Publish the exchange only when the entire tail fits.
+ */
+function closeTailPage(initial: PackingResult, width: number, height: number,
+  neighbors: Array<[number, number]>): PackingResult {
+  const tail = initial.pages.at(-1)
+  if (!tail || initial.pages.length < 2 || tail.items.length > 4) return initial
+  const budget: Budget = { left: 24_000_000 }
+  const query = (page: GridPage, item: PlacedItem) => {
+    const allowance = Math.min(budget.left, 1_000_000), local = { left: allowance }
+    const fit = findFit(page, item, width, height, local, true, item.angle)
+    budget.left -= allowance - Math.max(0, local.left)
+    return fit
+  }
+  const insert = (fit: Fit, item: PlacedItem) => {
+    fit.page.items.push({ ...item, xCm: fit.x * CELL_CM, yCm: fit.y * CELL_CM, angle: fit.angle })
+    fit.page.usedHeightCm = Math.max(fit.page.usedHeightCm, fit.bottom)
+    stamp(fit.page, fit.shape, fit.x, fit.y, neighbors)
+  }
+  for (let targetIndex = 0; targetIndex < initial.pages.length - 1 && budget.left > 0; targetIndex++) {
+    const seen = new Set<string>()
+    const choices = [...initial.pages[targetIndex].items]
+      .sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
+      .filter(item => { if (seen.has(item.sourceImageId)) return false; seen.add(item.sourceImageId); return true })
+    for (const evicted of choices) {
+      if (budget.left <= 0) break
+      const pages = initial.pages.slice(0, -1).map((page, index) =>
+        gridFrom(page.items.filter(item => index !== targetIndex || item.id !== evicted.id), width, height, neighbors))
+      const queue = [...tail.items].sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm)
+      queue.push(evicted)
+      let complete = true
+      for (const item of queue) {
+        let best: Fit | null = null
+        for (const page of pages) {
+          const fit = query(page, item)
+          if (fit && (!best || Math.max(page.usedHeightCm, fit.bottom) - page.usedHeightCm
+            < Math.max(best.page.usedHeightCm, best.bottom) - best.page.usedHeightCm - 1e-8)) best = fit
+          if (budget.left <= 0) break
+        }
+        if (!best) { complete = false; break }
+        insert(best, item)
+      }
+      if (!complete) continue
+      const result: PackingResult = { ...initial, strategy: 'contornos/redistribuido',
+        pages: pages.map((page, index) => ({ index, items: page.items, usedHeightCm: page.usedHeightCm })) }
+      if (better(result, initial)) return result
+    }
+  }
+  return initial
 }
 
 /** Keep the rectangular solution unless a complete contour solution improves it.
@@ -175,6 +335,9 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
   const fringe = Math.max(2.54 / 300, ...units.map(item => Math.max(
     item.widthCm / item.contentWidthPx, item.heightCm / item.contentHeightPx))) * 2
   const neighbors = clearanceOffsets(gap > 0 ? gap + 2 * fringe : 0)
+  const total = (trials.length + 4) * units.length
+  onProgress?.(0, total)
+  winner = compactAcrossPages(winner, width, height, neighbors, done => onProgress?.(done, total))
   for (let variant = 0; variant < trials.length; variant++) {
     const { order, angular } = trials[variant]
     const pages: GridPage[] = [], unplaced: PackingResult['unplaced'] = []
@@ -198,11 +361,15 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
         best.page.usedHeightCm = Math.max(best.page.usedHeightCm, best.bottom)
         stamp(best.page, best.shape, best.x, best.y, neighbors)
       }
-      onProgress?.(variant * units.length + index + 1, trials.length * units.length)
+      onProgress?.((variant + 2) * units.length + index + 1, total)
     }
     if (!complete) continue
     const result = { pages: pages.map((page, index): PackedPage => ({ index, items: page.items, usedHeightCm: page.usedHeightCm })), unplaced, strategy: 'contornos/rotacao-livre' }
     if (better(result, winner)) winner = result
   }
+  winner = compactAcrossPages(winner, width, height, neighbors,
+    done => onProgress?.((trials.length + 2) * units.length + done, total))
+  winner = closeTailPage(winner, width, height, neighbors)
+  onProgress?.(total, total)
   return winner
 }
