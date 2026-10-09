@@ -1,5 +1,7 @@
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
-import type { PackingResult } from './binPacking'
+import { joinShortPages, type PackingResult } from './binPacking'
+import { compactBlankBands } from './compactBands'
+import { packingScore } from './packingScore'
 import { rotatedAabbCm } from './geometry'
 import { CELL_CM, clearanceOffsets, shapeFor, type Shape } from './shapeMask'
 
@@ -125,17 +127,34 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
     if (best && box.hCm > best.bottom + 1e-8) return
     const shape = shapeFor(item.occupancyMask, item.widthCm, item.heightCm, angle)
     let foundY = -1, foundX = -1
+    // First search the current column and sheet edges. Moving a bottom art up
+    // in its existing column is much cheaper than scanning every x on every y.
+    // This preserves useful complete moves even on long, mixed jobs.
+    const anchors = [...new Set([Math.round(item.xCm / CELL_CM), 0, maxX])]
+      .filter(x => x >= 0 && x <= maxX)
+    if (page.items.length) for (const x of anchors) {
+      const limitY = Math.min(maxY, Math.floor(item.yCm / CELL_CM))
+      for (let y = 0; y <= limitY && budget.left > 0; y += 3) {
+        const gy = Math.min(y, limitY)
+        if (fits(page, shape, x, gy, budget)) {
+          if (foundY < 0 || gy < foundY || (gy === foundY && x < foundX)) { foundY = gy; foundX = x }
+          break
+        }
+      }
+    }
     const lastY = Math.min(maxY, best ? Math.floor((best.bottom - box.hCm + 1e-8) / CELL_CM) : maxY)
     // First place an empty page at the origin. On populated pages search the
     // whole width, including cavities, then refine to a one-millimetre grid.
-    for (let y = 0; foundY < 0 && budget.left > 0; y += step) {
-      const scanY = Math.min(y, lastY)
+    const anchoredY = foundY
+    let scannedFit = false
+    for (let y = 0; !scannedFit && budget.left > 0; y += step) {
+      const scanY = Math.min(y, anchoredY >= 0 ? Math.min(lastY, anchoredY) : lastY)
       for (let x = 0; budget.left > 0; x += step) {
         const scanX = Math.min(x, maxX)
-        if (fits(page, shape, scanX, scanY, budget)) { foundY = scanY; foundX = scanX; break }
+        if (fits(page, shape, scanX, scanY, budget)) { foundY = scanY; foundX = scanX; scannedFit = true; break }
         if (x >= maxX) break
       }
-      if (y >= lastY) break
+      if (y >= (anchoredY >= 0 ? Math.min(lastY, anchoredY) : lastY)) break
     }
     if (foundY < 0) return
     if (step > 1) {
@@ -151,7 +170,11 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
       best = { page, x: foundX, y: foundY, angle, shape, bottom }
   }
   const angles = angular ? anglesFor(item, width, height) : [0, 90, 180, 270]
-  if (preferredAngle !== undefined && !angles.includes(preferredAngle)) angles.unshift(preferredAngle)
+  if (preferredAngle !== undefined) {
+    const index = angles.indexOf(preferredAngle)
+    if (index >= 0) angles.splice(index, 1)
+    angles.unshift(preferredAngle)
+  }
   for (const angle of angles) {
     testAngle(angle, page.items.length ? 3 : 1)
     const current = best as Fit | null
@@ -169,7 +192,7 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
 }
 
 function score(result: PackingResult): number[] {
-  return [result.unplaced.length, result.pages.length, result.pages.reduce((sum, page) => sum + page.usedHeightCm, 0),
+  return [...packingScore(result),
     // Equal-length transfers still matter: pulling a non-bottom piece forward
     // frees the last sheet so a following move can actually close that sheet.
     result.pages.reduce((sum, page, index) => sum + index * page.items.reduce((area, item) => area + item.widthCm * item.heightCm, 0), 0),
@@ -300,6 +323,7 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
   const source = new Map(images.map(image => [image.id, image]))
   const attach = (item: PlacedItem) => ({ ...item, occupancyMask: source.get(item.sourceImageId)?.occupancyMask })
   let winner: PackingResult = { ...baseline, pages: baseline.pages.map(page => ({ ...page, items: page.items.map(attach) })) }
+  winner = compactBlankBands(winner, gap)
   const units: PlacedItem[] = images.flatMap(image => Array.from({ length: image.quantity }, (_, copy) => ({
     id: `${image.id}-${copy}`, sourceImageId: image.id, previewUrl: image.previewUrl,
     xCm: 0, yCm: 0, widthCm: image.widthCm, heightCm: image.heightCm, angle: 0,
@@ -314,10 +338,19 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
   const byId = new Map(units.map(item => [item.id, item]))
   const baselineOrder = baseline.pages.flatMap(page => page.items.map(item => byId.get(item.id)!))
   const remaining = units.filter(item => !baselineOrder.some(placed => placed.id === item.id))
+  // Alternate source groups as an independent fast trial. Descending sorts
+  // put all copies of one large design first and may strand another design in
+  // a separate column/page before its complementary contour is considered.
+  const groups = [...source.keys()].map(id => units.filter(item => item.sourceImageId === id)).filter(group => group.length)
+    .sort((a, b) => b[0].widthCm * b[0].heightCm - a[0].widthCm * a[0].heightCm)
+  const interleaved: PlacedItem[] = []
+  for (let copy = 0; copy < Math.max(...groups.map(group => group.length)); copy++)
+    for (const group of groups) if (group[copy]) interleaved.push(group[copy])
   const rawOrders = [
     [...units].sort((a, b) => b.widthCm * b.heightCm - a.widthCm * a.heightCm || a.id.localeCompare(b.id)),
     [...baselineOrder, ...remaining],
     [...units].sort((a, b) => Math.max(b.widthCm, b.heightCm) - Math.max(a.widthCm, a.heightCm) || a.id.localeCompare(b.id)),
+    ...(units.length <= 80 && groups.length > 1 ? [interleaved] : []),
   ]
   const seenOrders = new Set<string>()
   const uniqueOrders = rawOrders.filter(order => {
@@ -328,7 +361,7 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
   })
   // Finish a fast contour pass before the more expensive angular search, so a
   // bounded/interrupted fine search can retain a complete useful improvement.
-  const trials = [false, true].flatMap(angular => uniqueOrders.map(order => ({ order, angular })))
+  const trials = [false, true].flatMap(angular => (angular ? uniqueOrders.slice(0, 3) : uniqueOrders).map(order => ({ order, angular })))
   // Reserve a small interpolation fringe in addition to the requested gap.
   // Original alpha is sampled conservatively, while print raster antialiasing
   // can extend by up to a few original/output pixels after scaling/rotation.
@@ -364,12 +397,14 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
       onProgress?.((variant + 2) * units.length + index + 1, total)
     }
     if (!complete) continue
-    const result = { pages: pages.map((page, index): PackedPage => ({ index, items: page.items, usedHeightCm: page.usedHeightCm })), unplaced, strategy: 'contornos/rotacao-livre' }
+    const result = { pages: joinShortPages(pages.map((page, index): PackedPage => ({ index, items: page.items, usedHeightCm: page.usedHeightCm })), height, gap), unplaced, strategy: 'contornos/rotacao-livre' }
     if (better(result, winner)) winner = result
   }
   winner = compactAcrossPages(winner, width, height, neighbors,
     done => onProgress?.((trials.length + 2) * units.length + done, total))
   winner = closeTailPage(winner, width, height, neighbors)
+  winner = compactBlankBands(winner, gap)
+  winner = { ...winner, pages: joinShortPages(winner.pages, height, gap) }
   onProgress?.(total, total)
   return winner
 }

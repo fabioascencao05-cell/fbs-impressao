@@ -1,3 +1,4 @@
+import { packingScore } from './packingScore'
 import { rotatedAabbCm } from '@/lib/geometry'
 import type { GangImage, PackedPage, PlacedItem } from '@/types'
 
@@ -554,17 +555,10 @@ function packBestNext(
   }
 }
 
-function candidateScore(candidate: Candidate): [number, number, number] {
-  const totalHeight = candidate.pages.reduce((sum, page) => sum + page.usedHeightCm + END_MARGIN_CM, 0)
-  // Respect the requested roll length: don't choose many short files merely
-  // because their summed occupied height is a little smaller.
-  return [candidate.unplaced.length, candidate.pages.length, totalHeight]
-}
-
 /** Trials with shorter heights may improve rows, but aren't export boundaries. */
-function joinShortPages(pages: PackedPage[], maxHeightCm: number, gapCm: number): PackedPage[] {
+export function joinShortPages(pages: PackedPage[], maxHeightCm: number, gapCm: number): PackedPage[] {
   const joined: PackedPage[] = []
-  for (const page of pages) {
+  for (const page of [...pages].sort((a, b) => b.usedHeightCm - a.usedHeightCm)) {
     const target = joined.find((entry) => entry.usedHeightCm + gapCm + page.usedHeightCm <= maxHeightCm + EPSILON)
     if (!target) {
       joined.push({ ...page, index: joined.length })
@@ -578,8 +572,8 @@ function joinShortPages(pages: PackedPage[], maxHeightCm: number, gapCm: number)
 }
 
 function isBetter(candidate: Candidate, current: Candidate): boolean {
-  const candidateScoreValue = candidateScore(candidate)
-  const currentScoreValue = candidateScore(current)
+  const candidateScoreValue = packingScore(candidate)
+  const currentScoreValue = packingScore(current)
   for (let index = 0; index < candidateScoreValue.length; index++) {
     if (candidateScoreValue[index] < currentScoreValue[index] - EPSILON) return true
     if (candidateScoreValue[index] > currentScoreValue[index] + EPSILON) return false
@@ -834,6 +828,8 @@ export function packImages(images: GangImage[], maxHeightCm: number, canvasWidth
   })
 
   const rows = packRepeatedRows(units, maxHeightCm, canvasWidthCm, itemGapCm)
-  if (rows && isBetter(rows, { ...best, pages })) return { pages: rows.pages, unplaced: rows.unplaced, strategy: rows.name }
-  return { pages, unplaced: best.unplaced, strategy: best.name + (compressed ? '/compactado' : '') }
+  if (rows) rows.pages = joinShortPages(rows.pages, maxHeightCm, itemGapCm)
+  const joinedPages = joinShortPages(pages, maxHeightCm, itemGapCm)
+  if (rows && isBetter(rows, { ...best, pages: joinedPages })) return { pages: rows.pages, unplaced: rows.unplaced, strategy: rows.name }
+  return { pages: joinedPages, unplaced: best.unplaced, strategy: best.name + (compressed ? '/compactado' : '') }
 }
