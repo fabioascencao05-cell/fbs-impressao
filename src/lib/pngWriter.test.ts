@@ -14,22 +14,24 @@ async function chunks(blob: Blob) {
   return result
 }
 
-describe('PNG contínuo a 300 DPI', () => {
-  it('preserva RGB e alfa entre faixas, em um único PNG com metadados corretos', async () => {
+describe('PNG contínuo sem redução de resolução', () => {
+  it.each([300, 600, 1200])('preserva RGB e alfa entre faixas a %s DPI, em um único PNG com metadados corretos', async (dpi) => {
     const first = new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 0, 0])
     const last = new Uint8ClampedArray([0, 255, 0, 128, 0, 0, 255, 255])
     async function* strips() {
       yield { rgba: first, rows: 1 }
       yield { rgba: last, rows: 1 }
     }
-    const result = await chunks(await encodeRgbaPng(2, 2, 300, strips()))
+    const blob = await encodeRgbaPng(2, 2, dpi, strips())
+    expect(blob.type).toBe('image/png')
+    const result = await chunks(blob)
     const header = result.find((chunk) => chunk.type === 'IHDR')!.data
     expect(header.readUInt32BE(0)).toBe(2)
     expect(header.readUInt32BE(4)).toBe(2)
     expect(header[9]).toBe(6) // RGBA
     const density = result.find((chunk) => chunk.type === 'pHYs')!.data
-    expect(density.readUInt32BE(0)).toBe(11811)
-    expect(density.readUInt32BE(4)).toBe(11811)
+    expect(density.readUInt32BE(0)).toBe(Math.round(dpi / 0.0254))
+    expect(density.readUInt32BE(4)).toBe(Math.round(dpi / 0.0254))
     expect(density[8]).toBe(1)
     const raw = inflateSync(Buffer.concat(result.filter((chunk) => chunk.type === 'IDAT').map((chunk) => chunk.data)))
     expect(raw).toEqual(Buffer.from([0, ...first, 0, ...last]))

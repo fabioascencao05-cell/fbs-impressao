@@ -1,4 +1,4 @@
-import { ZoomIn, ZoomOut, Maximize, Trash2, RefreshCw, MousePointer2, Copy } from 'lucide-react'
+import { ZoomIn, ZoomOut, Maximize, Trash2, RefreshCw, MousePointer2, Copy, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from '@/lib/constants'
@@ -25,6 +25,9 @@ interface CanvasToolbarProps {
   onDeleteSelected: () => void
   onDuplicateSelected: () => void
   onRegenerate: () => void
+  pageIndices: number[]
+  onAddPage: () => void
+  onMoveSelected: (pageIndex: number) => void
 }
 
 export default function CanvasToolbar({
@@ -35,6 +38,9 @@ export default function CanvasToolbar({
   onDeleteSelected,
   onDuplicateSelected,
   onRegenerate,
+  pageIndices,
+  onAddPage,
+  onMoveSelected,
 }: CanvasToolbarProps) {
   const packingProgress = useGangSheetStore((s) => s.packingProgress)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
@@ -113,8 +119,17 @@ export default function CanvasToolbar({
       </Button>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        <Button variant="outline" size="sm" className="h-8" onClick={onAddPage} disabled={!!packingProgress}>
+          <Plus className="h-4 w-4" /> Nova folha
+        </Button>
         {selection ? (
           <>
+            <select aria-label="Mover arte para folha" value="" onChange={e => onMoveSelected(Number(e.target.value))}
+              className="h-8 max-w-40 rounded-md border bg-background px-2 text-xs">
+              <option value="" disabled>Mover para folha…</option>
+              {pageIndices.filter(index => index !== selection.pageIndex).map(index =>
+                <option key={index} value={index}>Folha {index + 1}</option>)}
+            </select>
             <Button
               variant="outline"
               size="sm"
@@ -133,13 +148,13 @@ export default function CanvasToolbar({
               title="Remover arte selecionada (Delete)"
             >
               <Trash2 className="h-4 w-4" />
-              Remover
+              Apagar arte
             </Button>
           </>
         ) : (
           <span className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
             <MousePointer2 className="h-3.5 w-3.5" />
-            Clique numa arte para mover, duplicar, girar ou redimensionar
+            Selecione para apagar. Arraste entre folhas ou use “Mover para folha”.
           </span>
         )}
       </div>

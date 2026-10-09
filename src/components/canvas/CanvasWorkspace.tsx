@@ -4,7 +4,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Layers, Trash2 } from 'lucide-react'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { DISPLAY_PX_PER_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
-import { sheetHeightCm as exportSheetHeightCm } from '@/lib/exportPlan'
+import { dropPlacement, findPageSpace, type ArtDrag } from '@/lib/pageEditing'
+import { rotatedAabbCm } from '@/lib/geometry'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import Ruler from './Ruler'
@@ -13,18 +14,20 @@ import CanvasToolbar from './CanvasToolbar'
 import { toast } from '@/hooks/use-toast'
 export default function CanvasWorkspace() {
   const pages = useGangSheetStore((s) => s.pages)
-  const trimExportHeight = useGangSheetStore((s) => s.trimExportHeight)
   const maxHeightCm = useGangSheetStore((s) => s.maxHeightCm)
   const canvasWidthCm = useGangSheetStore((s) => s.canvasWidthCm)
   const zoom = useGangSheetStore((s) => s.zoom)
   const setZoom = useGangSheetStore((s) => s.setZoom)
   const generateLayout = useGangSheetStore((s) => s.generateLayout)
   const removePlacedItem = useGangSheetStore((s) => s.removePlacedItem)
+  const movePlacedItem = useGangSheetStore((s) => s.movePlacedItem)
+  const addPage = useGangSheetStore((s) => s.addPage)
   const duplicatePlacedItem = useGangSheetStore((s) => s.duplicatePlacedItem)
   const removePage = useGangSheetStore((s) => s.removePage)
   const costPerMeter = useGangSheetStore((s) => s.costPerMeter)
 
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
+  const [drag, setDrag] = useState<ArtDrag | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const hadPagesRef = useRef(false)
@@ -40,7 +43,82 @@ export default function CanvasWorkspace() {
   } | null>(null)
 
   const pxPerCm = DISPLAY_PX_PER_CM * zoom
-  const visiblePages = useMemo(() => pages.filter((p) => p.items.length > 0), [pages])
+  const visiblePages = pages
+
+  const handleSelectionChange = useCallback((sel: SelectionInfo | null, pageIndex: number) => {
+    setSelection(current => sel ?? (current?.pageIndex === pageIndex ? null : current))
+  }, [])
+
+  useEffect(() => {
+    setSelection(current => {
+      if (!current) return null
+      const page = pages.find(page => page.items.some(item => item.id === current.itemId))
+      if (!page) return null
+      return page.index === current.pageIndex ? current : { ...current, pageIndex: page.index }
+    })
+  }, [pages])
+
+  const getDropTarget = useCallback((moving: ArtDrag) => {
+    const state = useGangSheetStore.getState()
+    const item = state.pages.find(page => page.index === moving.pageIndex)?.items.find(item => item.id === moving.itemId)
+    if (!item) return null
+    for (const sheet of contentRef.current?.querySelectorAll<HTMLElement>('[data-sheet-page]') ?? []) {
+      const pageIndex = Number(sheet.dataset.sheetPage)
+      if (pageIndex === moving.pageIndex) continue
+      const rect = (sheet.querySelector('canvas.upper-canvas') ?? sheet).getBoundingClientRect()
+      const position = dropPlacement(item, moving, rect, state.canvasWidthCm, state.maxHeightCm)
+      if (position) return { pageIndex, item, position }
+    }
+    return null
+  }, [])
+
+  const dropTarget = useMemo(() => drag ? getDropTarget(drag) : null, [drag, getDropTarget])
+  const handleArtDrop = useCallback((moving: ArtDrag) => {
+    const target = getDropTarget(moving)
+    if (!target) return false
+    const moved = movePlacedItem(moving.pageIndex, moving.itemId, target.pageIndex, target.position.xCm, target.position.yCm)
+    if (moved) setSelection({ pageIndex: target.pageIndex, itemId: moving.itemId,
+      widthCm: target.item.widthCm, heightCm: target.item.heightCm, angle: target.item.angle })
+    return moved
+  }, [getDropTarget, movePlacedItem])
+
+  // Scroll to distant sheets while holding the art near the viewport edge.
+  useEffect(() => {
+    if (!drag) return
+    let frame = 0
+    const scroll = () => {
+      const el = scrollRef.current
+      if (el) {
+        const rect = el.getBoundingClientRect()
+        const speed = drag.clientY < rect.top + 60 ? -18 : drag.clientY > rect.bottom - 60 ? 18 : 0
+        if (speed) {
+          const before = el.scrollTop
+          el.scrollTop += speed
+          if (el.scrollTop !== before) setDrag(current => current && { ...current })
+        }
+      }
+      frame = requestAnimationFrame(scroll)
+    }
+    frame = requestAnimationFrame(scroll)
+    return () => cancelAnimationFrame(frame)
+  }, [drag])
+
+  const handleMoveSelected = useCallback((targetPageIndex: number) => {
+    if (!selection) return
+    const state = useGangSheetStore.getState()
+    const item = state.pages.find(page => page.index === selection.pageIndex)?.items.find(item => item.id === selection.itemId)
+    const target = state.pages.find(page => page.index === targetPageIndex)
+    if (!item || !target) return
+    const position = findPageSpace(item, target.items, state.canvasWidthCm, state.maxHeightCm, state.itemGapCm)
+    if (!position) {
+      toast({ title: 'Sem espaço livre nesta folha', description: 'Crie uma nova folha ou arraste a arte para a posição desejada.' })
+      return
+    }
+    if (movePlacedItem(selection.pageIndex, item.id, targetPageIndex, position.xCm, position.yCm))
+      setSelection({ ...selection, pageIndex: targetPageIndex })
+  }, [selection, movePlacedItem])
+
+  const handleAddPage = useCallback(() => { addPage() }, [addPage])
 
   const handleDeleteSelected = useCallback(() => {
     if (!selection) return
@@ -58,7 +136,7 @@ export default function CanvasWorkspace() {
       if (!window.confirm(`Apagar a página ${pageIndex + 1}? Essa ação não pode ser desfeita.`))
         return
       removePage(pageIndex)
-      setSelection((sel) => (sel?.pageIndex === pageIndex ? null : sel))
+      setSelection(null)
     },
     [removePage]
   )
@@ -138,7 +216,9 @@ export default function CanvasWorkspace() {
   // Delete key removes the selected art.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' && selection) {
+      const target = e.target as HTMLElement | null
+      if (target?.isContentEditable || target?.closest('input, textarea, select')) return
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
         e.preventDefault()
         handleDeleteSelected()
       }
@@ -159,6 +239,9 @@ export default function CanvasWorkspace() {
           onDeleteSelected={handleDeleteSelected}
           onDuplicateSelected={handleDuplicateSelected}
           onRegenerate={handleRegenerate}
+          pageIndices={pages.map(page => page.index)}
+          onAddPage={handleAddPage}
+          onMoveSelected={handleMoveSelected}
         />
       )}
 
@@ -202,7 +285,7 @@ export default function CanvasWorkspace() {
             className="mx-auto flex w-fit min-w-full flex-col items-center gap-10 p-8 md:px-16"
           >
             {visiblePages.map((page) => {
-              const sheetHeightCm = exportSheetHeightCm(page, maxHeightCm, trimExportHeight)
+              const sheetHeightCm = maxHeightCm
               const consumption = calculateConsumption([page], canvasWidthCm, costPerMeter)
               const eff = consumption.efficiency / 100
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
@@ -237,15 +320,24 @@ export default function CanvasWorkspace() {
                       </Button>
                     </div>
                   </div>
-                  <div className="overflow-hidden rounded-xl shadow-xl ring-1 ring-black/10 dark:ring-white/10">
+                  <div className={`relative overflow-hidden rounded-xl shadow-xl ring-1 ${dropTarget?.pageIndex === page.index ? 'ring-4 ring-primary' : 'ring-black/10 dark:ring-white/10'}`}>
                     <Ruler orientation="horizontal" lengthCm={canvasWidthCm} pxPerCm={pxPerCm} />
                     <CanvasPage
                       page={page}
                       canvasWidthCm={canvasWidthCm}
                       sheetHeightCm={sheetHeightCm}
                       pxPerCm={pxPerCm}
-                      onSelectionChange={setSelection}
+                      selectedItemId={selection?.pageIndex === page.index ? selection.itemId : null}
+                      onSelectionChange={handleSelectionChange}
+                      onArtDrag={setDrag}
+                      onArtDrop={handleArtDrop}
                     />
+                    {dropTarget?.pageIndex === page.index && (() => {
+                      const box = rotatedAabbCm(dropTarget.item.widthCm, dropTarget.item.heightCm, dropTarget.item.angle)
+                      return <div className="pointer-events-none absolute rounded border-2 border-dashed border-primary bg-primary/15"
+                        style={{ left: dropTarget.position.xCm * pxPerCm, top: (dropTarget.position.yCm + 1) * pxPerCm,
+                          width: box.wCm * pxPerCm, height: box.hCm * pxPerCm }} />
+                    })()}
                   </div>
                 </div>
               )
@@ -253,6 +345,10 @@ export default function CanvasWorkspace() {
           </div>
         )}
       </div>
+      {drag && <div className="pointer-events-none fixed z-50 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-lg"
+        style={{ left: drag.clientX + 16, top: drag.clientY + 16 }}>
+        {dropTarget ? `Solte na folha ${dropTarget.pageIndex + 1}` : 'Arraste até outra folha · bordas rolam a tela'}
+      </div>}
     </main>
   )
 }

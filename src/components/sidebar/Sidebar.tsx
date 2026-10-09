@@ -12,14 +12,13 @@ import { downloadGangSheets } from '@/lib/exportCanvas'
 import { toast } from '@/hooks/use-toast'
 import { useMemo, useState } from 'react'
 import { validateLayout } from '@/lib/layoutValidation'
+import { exportDpi } from '@/lib/exportPlan'
 
 interface SidebarProps {
   onClose?: () => void
 }
 
 export default function Sidebar({ onClose }: SidebarProps) {
-  const trimExportHeight = useGangSheetStore((s) => s.trimExportHeight)
-  const setTrimExportHeight = useGangSheetStore((s) => s.setTrimExportHeight)
   const images = useGangSheetStore((s) => s.images)
   const maxHeightCm = useGangSheetStore((s) => s.maxHeightCm)
   const setMaxHeightCm = useGangSheetStore((s) => s.setMaxHeightCm)
@@ -43,6 +42,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
     [pages, canvasWidthCm, maxHeightCm, itemGapCm])
 
   const hasLayout = pages.some((p) => p.items.length > 0)
+  const dpiValues = pages.filter(page => page.items.length > 0).map(exportDpi)
+  const dpiLabel = dpiValues.length ? `${Math.min(...dpiValues)}${Math.max(...dpiValues) === Math.min(...dpiValues) ? '' : `–${Math.max(...dpiValues)}`} DPI` : '300+ DPI'
   const totalUnits = images.reduce((n, img) => n + img.quantity, 0)
   const layoutStats = useMemo(() => calculateConsumption(pages, canvasWidthCm, costPerMeter),
     [pages, canvasWidthCm, costPerMeter])
@@ -81,15 +82,15 @@ export default function Sidebar({ onClose }: SidebarProps) {
     setIsExporting(true)
     setExportProgress(0)
     try {
-      const warnings = await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm, trimExportHeight,
+      const warnings = await downloadGangSheets(pages, canvasWidthCm, maxHeightCm, itemGapCm,
         (done, total) => setExportProgress(Math.round(done / total * 100)))
       const pageCount = pages.filter((p) => p.items.length > 0).length
       toast({
         title: warnings.length ? 'Arquivo baixado — confira o espaço de corte' : 'Exportação concluída',
         description:
           pageCount > 1
-            ? `${pageCount} páginas em PNG transparente, 300 DPI, com as medidas e posições da montagem.`
-            : 'PNG transparente a 300 DPI, com as medidas e posições da montagem.',
+            ? `${pageCount} páginas em PNG transparente, ${dpiLabel}, recortadas à área útil, sem reduzir a resolução das artes.`
+            : `PNG transparente, ${dpiLabel}, recortado à área útil, sem reduzir a resolução das artes.`,
       })
     } catch (err) {
       toast({
@@ -182,10 +183,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
               </div>
             </div>
             <p className="text-[10px] leading-relaxed text-muted-foreground">Área disponível: {canvasWidthCm} × {maxHeightCm} cm. O custo considera somente o comprimento ocupado, incluindo espaços e margem final de 0,1 cm.</p>
-            <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
-              <input type="checkbox" checked={trimExportHeight} onChange={(e) => setTrimExportHeight(e.target.checked)} />
-              Cortar sobra vazia no PNG (não altera o custo)
-            </label>
+            <p className="text-[10px] text-muted-foreground">O PNG baixa somente a área útil, com fundo transparente e a margem final de corte.</p>
           </div>
         </div>
 
@@ -272,9 +270,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
           onClick={handleDownload}
         >
           <Download className="h-4 w-4" />
-          {isExporting ? `Exportando ${exportProgress}%...` : 'Download DTF · 300 DPI'}
+          {isExporting ? `Exportando ${exportProgress}%...` : `Download PNG · ${dpiLabel}`}
         </Button>
-        <p className="text-center text-[10px] text-muted-foreground">PNG transparente · mantém tamanhos, cores, giros e posições.</p>
+        <p className="text-center text-[10px] text-muted-foreground">Área útil · PNG transparente · resolução original, mínimo 300 DPI · mantém medidas e montagem.</p>
       </div>
     </aside>
   )

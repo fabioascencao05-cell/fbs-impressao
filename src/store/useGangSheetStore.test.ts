@@ -116,6 +116,91 @@ class FakeWorker {
   emit(data: unknown) { this.onmessage?.({ data } as MessageEvent) }
 }
 
+describe('edição de cópias entre folhas', () => {
+  beforeEach(() => {
+    vi.stubGlobal('Worker', FakeWorker)
+    const image = { ...sourceImage('art'), quantity: 2 }
+    useGangSheetStore.setState({ images: [image], pages: [
+      { index: 0, items: [placed('art-0', 'art', 30)], usedHeightCm: 40 },
+      { index: 1, items: [placed('art-1', 'art', 0)], usedHeightCm: 10 },
+    ], maxHeightCm: 100, canvasWidthCm: 57, itemGapCm: 0.3, costPerMeter: 55, packingProgress: null })
+  })
+  afterEach(() => { useGangSheetStore.getState().cancelPacking(); vi.unstubAllGlobals() })
+
+  it('transfere a mesma cópia, preserva resolução/medidas/giro, mantém folha vazia como destino e recalcula o consumo', () => {
+    const original = { ...placed('art-0', 'art', 30), widthCm: 10, heightCm: 5, angle: 90,
+      contentWidthPx: 1000, contentHeightPx: 500 }
+    useGangSheetStore.setState({ pages: [
+      { index: 0, items: [original], usedHeightCm: 40 },
+      { index: 1, items: [placed('art-1', 'art', 0)], usedHeightCm: 10 },
+    ] })
+    const images = useGangSheetStore.getState().images
+    const before = calculateConsumption(useGangSheetStore.getState().pages, 57, 55)
+    expect(useGangSheetStore.getState().movePlacedItem(0, 'art-0', 1, 15, 0)).toBe(true)
+    const state = useGangSheetStore.getState()
+    expect(state.pages[0]).toEqual({ index: 0, items: [], usedHeightCm: 0 })
+    expect(state.pages[1].items[1]).toEqual({ ...original, xCm: 15, yCm: 0 })
+    expect(state.pages.flatMap(page => page.items).map(item => item.id).sort()).toEqual(['art-0', 'art-1'])
+    expect(state.images).toBe(images)
+    const totals = calculateConsumption(state.pages, 57, 55)
+    expect(totals.units).toBe(2)
+    expect(totals.cost).toBeLessThan(before.cost)
+    expect(state.packingProgress).toBeNull()
+  })
+  it('não perde a arte se o destino não existir ou se não couber com as medidas originais', () => {
+    const pages = useGangSheetStore.getState().pages
+    expect(useGangSheetStore.getState().movePlacedItem(0, 'art-0', 9, 0, 0)).toBe(false)
+    expect(useGangSheetStore.getState().movePlacedItem(0, 'art-0', 1, NaN, 0)).toBe(false)
+    useGangSheetStore.setState({ maxHeightCm: 9 })
+    expect(useGangSheetStore.getState().movePlacedItem(0, 'art-0', 1, 0, 0)).toBe(false)
+    expect(useGangSheetStore.getState().pages).toBe(pages)
+  })
+  it('apagar uma cópia atualiza a fila para que ela não volte na próxima otimização', async () => {
+    useGangSheetStore.getState().removePlacedItem(0, 'art-0')
+    expect(useGangSheetStore.getState().images[0].quantity).toBe(1)
+    expect(useGangSheetStore.getState().pages[1].items[0].id).toBe('art-1')
+    const task = useGangSheetStore.getState().generateLayout()
+    expect(FakeWorker.latest.input?.images[0]).toMatchObject({ quantity: 1 })
+    useGangSheetStore.getState().cancelPacking()
+    expect(await task).toBe(false)
+  })
+  it('apagar a última cópia libera o arquivo original somente depois da última remoção', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    useGangSheetStore.getState().removePlacedItem(0, 'art-0')
+    expect(revoke).not.toHaveBeenCalled()
+    useGangSheetStore.getState().removePlacedItem(1, 'art-1')
+    expect(revoke).toHaveBeenCalledWith('blob:art')
+    expect(useGangSheetStore.getState().images).toEqual([])
+    expect(calculateConsumption(useGangSheetStore.getState().pages, 57, 55).cost).toBe(0)
+    revoke.mockRestore()
+  })
+  it('duplicar cria identificadores únicos e mantém a quantidade da fila sincronizada', () => {
+    useGangSheetStore.getState().duplicatePlacedItem(0, 'art-0')
+    useGangSheetStore.getState().duplicatePlacedItem(0, 'art-0')
+    const state = useGangSheetStore.getState()
+    expect(state.images[0].quantity).toBe(4)
+    const items = state.pages.flatMap(page => page.items)
+    expect(new Set(items.map(item => item.id)).size).toBe(4)
+    expect(items.every(item => item.contentWidthPx === 1000)).toBe(true)
+  })
+  it('a transferência cancela uma busca pendente antes que a resposta restaure a posição antiga', async () => {
+    const task = useGangSheetStore.getState().generateLayout(), worker = FakeWorker.latest
+    useGangSheetStore.getState().movePlacedItem(0, 'art-0', 1, 15, 0)
+    worker.emit({ type: 'result', result: { pages: [], unplaced: [], strategy: 'antigo' } })
+    expect(await task).toBe(false)
+    expect(worker.terminated).toBe(true)
+    expect(useGangSheetStore.getState().pages[1].items).toHaveLength(2)
+  })
+  it('uma folha vazia não consome filme, e apagar a folha reduz também as cópias solicitadas', () => {
+    const cost = calculateConsumption(useGangSheetStore.getState().pages, 57, 55).cost
+    expect(useGangSheetStore.getState().addPage()).toBe(2)
+    expect(calculateConsumption(useGangSheetStore.getState().pages, 57, 55).cost).toBe(cost)
+    useGangSheetStore.getState().removePage(0)
+    expect(useGangSheetStore.getState().images[0].quantity).toBe(1)
+    expect(useGangSheetStore.getState().pages[0].items[0].id).toBe('art-1')
+  })
+})
+
 describe('otimização em segundo plano', () => {
   beforeEach(() => {
     vi.stubGlobal('Worker', FakeWorker)

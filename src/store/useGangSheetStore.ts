@@ -6,6 +6,7 @@ import { computeContentBox } from '@/lib/trimImage'
 import { readOccupancyMask } from '@/lib/shapeMask'
 import { readImageResolutionDpi } from '@/lib/imageResolution'
 import { defaultPrintWidthCm } from '@/lib/printQuality'
+import { clampPlacement } from '@/lib/pageEditing'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
@@ -44,6 +45,8 @@ interface GangSheetState {
   cancelPacking: () => void
   updatePlacedItem: (pageIndex: number, itemId: string, patch: Partial<PlacedItem>) => void
   removePlacedItem: (pageIndex: number, itemId: string) => void
+  movePlacedItem: (pageIndex: number, itemId: string, targetPageIndex: number, xCm: number, yCm: number) => boolean
+  addPage: () => number
   duplicatePlacedItem: (pageIndex: number, itemId: string) => void
   removePage: (pageIndex: number) => void
   setZoom: (zoom: number) => void
@@ -68,6 +71,17 @@ function itemBottomCm(it: PlacedItem) {
 
 function computeUsedHeightCm(items: PlacedItem[]) {
   return items.reduce((max, it) => Math.max(max, itemBottomCm(it)), 0)
+}
+
+function removeCopies(images: GangImage[], removed: PlacedItem[]) {
+  const counts = new Map<string, number>()
+  for (const item of removed) counts.set(item.sourceImageId, (counts.get(item.sourceImageId) ?? 0) + 1)
+  return images.flatMap(image => {
+    const quantity = image.quantity - (counts.get(image.id) ?? 0)
+    if (quantity > 0) return [{ ...image, quantity }]
+    URL.revokeObjectURL(image.previewUrl)
+    return []
+  })
 }
 
 const clearedLayout = () => ({
@@ -286,14 +300,39 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   removePlacedItem: (pageIndex, itemId) => {
     get().cancelPacking()
-    set((state) => ({
-      pages: state.pages.map((page) => {
-        if (page.index !== pageIndex) return page
-        const items = page.items.filter((it) => it.id !== itemId)
-        const usedHeightCm = computeUsedHeightCm(items)
-        return { ...page, items, usedHeightCm }
-      }),
-    }))
+    set((state) => {
+      const removed = state.pages.find(page => page.index === pageIndex)?.items.filter(item => item.id === itemId) ?? []
+      return { images: removeCopies(state.images, removed),
+        pages: state.pages.map((page) => {
+          if (page.index !== pageIndex) return page
+          const items = page.items.filter((it) => it.id !== itemId)
+          const usedHeightCm = computeUsedHeightCm(items)
+          return { ...page, items, usedHeightCm }
+        }), packingStrategy: null }
+    })
+  },
+
+  movePlacedItem: (pageIndex, itemId, targetPageIndex, xCm, yCm) => {
+    const state = get()
+    const item = state.pages.find(page => page.index === pageIndex)?.items.find(item => item.id === itemId)
+    if (!item || pageIndex === targetPageIndex || !state.pages.some(page => page.index === targetPageIndex)) return false
+    const position = clampPlacement(item, xCm, yCm, state.canvasWidthCm, state.maxHeightCm)
+    if (!position) return false
+    get().cancelPacking()
+    set({ pages: state.pages.map(page => {
+      if (page.index !== pageIndex && page.index !== targetPageIndex) return page
+      const items = page.index === pageIndex ? page.items.filter(other => other.id !== itemId)
+        : [...page.items, { ...item, ...position }]
+      return { ...page, items, usedHeightCm: computeUsedHeightCm(items) }
+    }), packingStrategy: null })
+    return true
+  },
+
+  addPage: () => {
+    get().cancelPacking()
+    const index = Math.max(-1, ...get().pages.map(page => page.index)) + 1
+    set(state => ({ pages: [...state.pages, { index, items: [], usedHeightCm: 0 }] }))
+    return index
   },
 
   duplicatePlacedItem: (pageIndex, itemId) => {
@@ -305,7 +344,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         if (!source) return page
         const clone: PlacedItem = {
           ...source,
-          id: `${source.sourceImageId}-dup-${Date.now()}`,
+          id: `${source.sourceImageId}-dup-${crypto.randomUUID()}`,
           xCm: source.xCm + 1,
           yCm: source.yCm + 1,
         }
@@ -313,12 +352,15 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
         const usedHeightCm = computeUsedHeightCm(items)
         return { ...page, items, usedHeightCm }
       }),
+      images: state.images.map(image => state.pages.find(page => page.index === pageIndex)?.items
+        .some(item => item.id === itemId && item.sourceImageId === image.id) ? { ...image, quantity: image.quantity + 1 } : image),
     }))
   },
 
   removePage: (pageIndex) => {
     get().cancelPacking()
     set((state) => ({
+      images: removeCopies(state.images, state.pages.find(page => page.index === pageIndex)?.items ?? []),
       pages: state.pages
         .filter((page) => page.index !== pageIndex)
         .map((page, index) => ({ ...page, index })),

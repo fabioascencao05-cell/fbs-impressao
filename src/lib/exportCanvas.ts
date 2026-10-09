@@ -1,5 +1,5 @@
 import JSZip from 'jszip'
-import { planExport, sheetHeightCm } from './exportPlan'
+import { planUsefulExport } from './exportPlan'
 import { encodeRgbaPng } from './pngWriter'
 import { rotatedAabbCm } from './geometry'
 import { validateLayout } from './layoutValidation'
@@ -32,10 +32,9 @@ export async function renderPageToBlob(
   page: PackedPage,
   canvasWidthCm: number,
   maxHeightCm: number,
-  trimHeight = false,
   onProgress?: (done: number, total: number) => void
 ): Promise<Blob> {
-  const plan = planExport(page, canvasWidthCm, sheetHeightCm(page, maxHeightCm, trimHeight))
+  const plan = planUsefulExport(page, canvasWidthCm, maxHeightCm)
   const sourceEntries = [...new Set(page.items.map((item) => item.previewUrl))]
   const images = new Map(await Promise.all(sourceEntries.map(async (url) => [url, await loadImage(url)] as const)))
   const canvas = document.createElement('canvas')
@@ -52,10 +51,10 @@ export async function renderPageToBlob(
       const rows = Math.min(stripRows, plan.heightPx - top)
       ctx!.clearRect(0, 0, plan.widthPx, stripRows)
       ctx!.save()
-      ctx!.translate(0, -top)
+      ctx!.translate(-plan.offsetXPx, -plan.offsetYPx - top)
       for (const item of page.items) {
         const box = rotatedAabbCm(item.widthCm, item.heightCm, item.angle)
-        if ((item.yCm + box.hCm) * plan.pxPerCm < top - 2 || item.yCm * plan.pxPerCm > top + rows + 2) continue
+        if ((item.yCm + box.hCm) * plan.pxPerCm < plan.offsetYPx + top - 2 || item.yCm * plan.pxPerCm > plan.offsetYPx + top + rows + 2) continue
         const image = images.get(item.previewUrl)
         if (!image) throw new Error('Não foi possível preparar uma arte para a exportação.')
         drawItem(ctx!, item, image, plan.pxPerCm)
@@ -74,13 +73,12 @@ export async function renderPageToBlob(
   }
 }
 
-/** Export the current composition unchanged, at fixed 300 DPI. */
+/** PNG of the useful composition at native density, at least 300 DPI. */
 export async function downloadGangSheets(
   pages: PackedPage[],
   canvasWidthCm: number,
   maxHeightCm: number,
   itemGapCm: number,
-  trimHeight = false,
   onProgress?: (done: number, total: number) => void
 ) {
   const nonEmptyPages = pages.filter((page) => page.items.length > 0)
@@ -90,25 +88,30 @@ export async function downloadGangSheets(
   if (outside) throw new Error(`${outside.message} Mova a arte para dentro da folha para evitar cortes no arquivo.`)
   // Cutting-space/box intersections are advisory. The user's manual layout
   // remains authoritative: never force a repack or silently move artwork.
-  nonEmptyPages.forEach((page) => planExport(page, canvasWidthCm, sheetHeightCm(page, maxHeightCm, trimHeight)))
+  const plans = nonEmptyPages.map((page) => planUsefulExport(page, canvasWidthCm, maxHeightCm))
+  const filename = (index: number) => {
+    const plan = plans[index]
+    const width = (plan.widthPx / plan.pxPerCm).toFixed(2)
+    const height = (plan.heightPx / plan.pxPerCm).toFixed(2)
+    return `gang-sheet-dtf-pagina-${nonEmptyPages[index].index + 1}-${width}x${height}cm-${plan.dpi}dpi.png`
+  }
 
   if (nonEmptyPages.length === 1) {
     const page = nonEmptyPages[0]
-    triggerDownload(await renderPageToBlob(page, canvasWidthCm, maxHeightCm, trimHeight, onProgress), `gang-sheet-dtf-${sheetHeightCm(page, maxHeightCm, trimHeight).toFixed(1)}cm-300dpi.png`)
+    triggerDownload(await renderPageToBlob(page, canvasWidthCm, maxHeightCm, onProgress), filename(0))
     return issues
   }
 
   const zip = new JSZip()
-  const totalRows = nonEmptyPages.reduce((sum, page) => sum + planExport(page, canvasWidthCm, sheetHeightCm(page, maxHeightCm, trimHeight)).heightPx, 0)
+  const totalRows = plans.reduce((sum, plan) => sum + plan.heightPx, 0)
   let completedRows = 0
-  for (const page of nonEmptyPages) {
-    const height = sheetHeightCm(page, maxHeightCm, trimHeight).toFixed(1)
-    const blob = await renderPageToBlob(page, canvasWidthCm, maxHeightCm, trimHeight,
+  for (const [index, page] of nonEmptyPages.entries()) {
+    const blob = await renderPageToBlob(page, canvasWidthCm, maxHeightCm,
       (done) => onProgress?.(completedRows + done, totalRows))
-    zip.file(`gang-sheet-dtf-pagina-${page.index + 1}-${height}cm-300dpi.png`, await blob.arrayBuffer())
-    completedRows += planExport(page, canvasWidthCm, sheetHeightCm(page, maxHeightCm, trimHeight)).heightPx
+    zip.file(filename(index), await blob.arrayBuffer())
+    completedRows += plans[index].heightPx
   }
-  triggerDownload(await zip.generateAsync({ type: 'blob' }), 'gang-sheets-dtf-300dpi.zip')
+  triggerDownload(await zip.generateAsync({ type: 'blob' }), 'gang-sheets-dtf-png.zip')
   return issues
 }
 

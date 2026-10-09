@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as fabric from 'fabric'
 import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { rotatedAabbCm } from '@/lib/geometry'
+import type { ArtDrag } from '@/lib/pageEditing'
 import type { PackedPage } from '@/types'
 
 export interface SelectionInfo {
@@ -17,7 +18,10 @@ interface CanvasPageProps {
   canvasWidthCm: number
   sheetHeightCm: number
   pxPerCm: number
-  onSelectionChange: (sel: SelectionInfo | null) => void
+  selectedItemId: string | null
+  onSelectionChange: (sel: SelectionInfo | null, pageIndex: number) => void
+  onArtDrag: (drag: ArtDrag | null) => void
+  onArtDrop: (drag: ArtDrag) => boolean
 }
 
 interface HudInfo {
@@ -42,13 +46,18 @@ export default function CanvasPage({
   canvasWidthCm,
   sheetHeightCm,
   pxPerCm,
+  selectedItemId,
   onSelectionChange,
+  onArtDrag,
+  onArtDrop,
 }: CanvasPageProps) {
   const canvasElRef = useRef<HTMLCanvasElement>(null)
   const fabricRef = useRef<fabric.Canvas | null>(null)
   const updatePlacedItem = useGangSheetStore((s) => s.updatePlacedItem)
   const sheetBackgroundColor = useGangSheetStore((s) => s.sheetBackgroundColor)
   const [hud, setHud] = useState<HudInfo | null>(null)
+  const selectedIdRef = useRef(selectedItemId)
+  selectedIdRef.current = selectedItemId
 
   const widthPx = canvasWidthCm * pxPerCm
   const heightPx = sheetHeightCm * pxPerCm
@@ -80,6 +89,14 @@ export default function CanvasPage({
     if (!canvas) return
 
     const pageIndex = page.index
+    let grab: { itemId: string; grabXCm: number; grabYCm: number } | null = null
+    let dragging = false
+    const dragInfo = (event?: Event): ArtDrag | null => {
+      if (!grab || !event) return null
+      const point = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : event as MouseEvent
+      if (!point) return null
+      return { pageIndex, ...grab, clientX: point.clientX, clientY: point.clientY }
+    }
 
     // Real (unrotated) art size + bounding-box top-left in cm, read straight
     // from the Fabric object. The image is cropped to its content box and uses a
@@ -100,7 +117,7 @@ export default function CanvasPage({
     const reportSelection = () => {
       const obj = canvas.getActiveObject() as TaggedImage | undefined
       if (!obj?.itemId) {
-        onSelectionChange(null)
+        onSelectionChange(null, pageIndex)
         setHud(null)
         return
       }
@@ -108,7 +125,7 @@ export default function CanvasPage({
       const widthCm = rect?.widthCm ?? obj.getScaledWidth() / pxPerCm
       const heightCm = rect?.heightCm ?? obj.getScaledHeight() / pxPerCm
       const angle = obj.angle ?? 0
-      onSelectionChange({ pageIndex, itemId: obj.itemId, widthCm, heightCm, angle })
+      onSelectionChange({ pageIndex, itemId: obj.itemId, widthCm, heightCm, angle }, pageIndex)
 
       // Position the CorelDraw-style dimension readout above the object's
       // (rotated) bounding box — same coordinate space as the canvas element.
@@ -136,8 +153,9 @@ export default function CanvasPage({
       }
     }
 
-    const onMoving = (e: { target?: fabric.FabricObject }) => {
-      if (e.target) clampToSheet(e.target)
+    const onMoving = (e: { target?: fabric.FabricObject; e?: Event }) => {
+      dragging = true
+      onArtDrag(dragInfo(e.e))
       reportSelection()
     }
     const onScaling = (e: { target?: fabric.FabricObject }) => {
@@ -146,9 +164,13 @@ export default function CanvasPage({
     }
     const onRotating = () => reportSelection()
 
-    const onModified = (e: { target?: fabric.FabricObject }) => {
+    const onModified = (e: { target?: fabric.FabricObject; e?: Event }) => {
       const obj = e.target as TaggedImage | undefined
       if (!obj?.itemId) return
+      const drop = dragging ? dragInfo(e.e) : null
+      dragging = false
+      onArtDrag(null)
+      if (drop && onArtDrop(drop)) return
       clampToSheet(obj)
       const rect = contentRectCm(obj)
       if (!rect) return
@@ -161,10 +183,21 @@ export default function CanvasPage({
       })
     }
 
+    // Clear before registering handlers: rebuilding one page must not erase a
+    // selection belonging to another page or hide the selected-art buttons.
+    canvas.clear()
+    canvas.on('mouse:down', e => {
+      const obj = e.target as TaggedImage | undefined
+      if (!obj?.itemId) { grab = null; return }
+      const br = obj.getBoundingRect()
+      grab = { itemId: obj.itemId, grabXCm: (e.scenePoint.x - br.left) / pxPerCm,
+        grabYCm: (e.scenePoint.y - br.top) / pxPerCm }
+    })
+    canvas.on('mouse:up', () => { dragging = false; grab = null; onArtDrag(null) })
     canvas.on('selection:created', reportSelection)
     canvas.on('selection:updated', reportSelection)
     canvas.on('selection:cleared', () => {
-      onSelectionChange(null)
+      onSelectionChange(null, pageIndex)
       setHud(null)
     })
     canvas.on('object:moving', onMoving)
@@ -173,7 +206,6 @@ export default function CanvasPage({
     canvas.on('object:modified', onModified)
 
     let cancelled = false
-    canvas.clear()
 
     Promise.all(
       page.items.map((item) =>
@@ -215,11 +247,15 @@ export default function CanvasPage({
     ).then((images) => {
       if (cancelled) return
       images.forEach((img) => canvas.add(img))
+      const selected = images.find(img => (img as TaggedImage).itemId === selectedIdRef.current)
+      if (selected) canvas.setActiveObject(selected)
       canvas.renderAll()
     })
 
     return () => {
       cancelled = true
+      canvas.off('mouse:down')
+      canvas.off('mouse:up')
       canvas.off('selection:created', reportSelection)
       canvas.off('selection:updated', reportSelection)
       canvas.off('selection:cleared')
@@ -228,7 +264,16 @@ export default function CanvasPage({
       canvas.off('object:rotating', onRotating)
       canvas.off('object:modified', onModified)
     }
-  }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, updatePlacedItem])
+  }, [page, pxPerCm, widthPx, heightPx, onSelectionChange, onArtDrag, onArtDrop, updatePlacedItem])
+
+  useEffect(() => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const selected = canvas.getObjects().find(obj => (obj as TaggedImage).itemId === selectedItemId)
+    if (selected && canvas.getActiveObject() !== selected) canvas.setActiveObject(selected)
+    else if (!selectedItemId) { canvas.discardActiveObject(); setHud(null) }
+    canvas.requestRenderAll()
+  }, [selectedItemId])
 
   const backgroundStyle = BACKGROUND_PRESETS[sheetBackgroundColor]
     ? { backgroundImage: BACKGROUND_PRESETS[sheetBackgroundColor], backgroundSize: '20px 20px' }
@@ -237,6 +282,7 @@ export default function CanvasPage({
   return (
     <div
       className="gang-canvas-grid relative border"
+      data-sheet-page={page.index}
       style={{
         width: widthPx,
         height: heightPx,
