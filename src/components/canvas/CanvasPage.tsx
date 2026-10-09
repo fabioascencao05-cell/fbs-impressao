@@ -62,13 +62,15 @@ export default function CanvasPage({
   const widthPx = canvasWidthCm * pxPerCm
   const heightPx = sheetHeightCm * pxPerCm
 
-  // (Re)create the Fabric canvas whenever the pixel dimensions change.
+  // Keep one Fabric instance per mounted page. dispose() is asynchronous;
+  // creating a second instance on the same element during a zoom can let the
+  // old disposal clear the new drawing. Dimensions update in place instead.
   useEffect(() => {
     if (!canvasElRef.current) return
 
     const canvas = new fabric.Canvas(canvasElRef.current, {
-      width: widthPx,
-      height: heightPx,
+      width: 1,
+      height: 1,
       selection: false, // single-object selection only, no rubber-band group select
       uniformScaling: true, // corner-drag always keeps aspect ratio
       uniScaleKey: undefined, // no modifier key ever unlocks free distortion
@@ -78,9 +80,14 @@ export default function CanvasPage({
     fabricRef.current = canvas
 
     return () => {
-      canvas.dispose()
+      canvas.cancelRequestedRender()
+      void canvas.dispose()
       fabricRef.current = null
     }
+  }, [])
+
+  useEffect(() => {
+    fabricRef.current?.setDimensions({ width: widthPx, height: heightPx })
   }, [widthPx, heightPx])
 
   // Rebuild objects + rebind handlers when the page data or scale changes.
