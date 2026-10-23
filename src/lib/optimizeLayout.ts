@@ -55,7 +55,7 @@ export function optimizeLayout(images: GangImage[], height: number, width: numbe
   // A complete single sheet already shorter than the requested length cannot
   // benefit from extending it. Otherwise compare both complete layouts by
   // total consumed film, never extend just to reduce the number of files.
-  if (result.unplaced.length || result.pages.length > 1) {
+  if (result.unplaced.length || result.pages.length > 1 || result.pages.some(page => page.usedHeightCm > height + 1e-6)) {
     const extended = packImages(images, limit, width, gap)
     const seed = improves(extended, result) ? extended : result
     const candidate = packImagesByShape(images, seed, width, limit, gap, progress(1))
