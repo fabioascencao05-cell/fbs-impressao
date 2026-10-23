@@ -24,6 +24,18 @@ function silhouette(cols: number, rows: number, inside: (x: number, y: number) =
   return { cols, rows, data }
 }
 
+it('encontra um encaixe interno de 1 mm que não coincide com a amostragem de 3 mm', () => {
+  const u = silhouette(50, 40, (x, y) => x < .34 || x >= .54 || y >= .875)
+  const images = [image('u', 5, 4, 1, u), image('miolo', 1, 3.5)]
+  const baseline = packImages(images, 4, 5, 0)
+  expect(baseline.pages).toHaveLength(2)
+  const result = packImagesByShape(images, baseline, 5, 4, 0)
+  expect(result.pages).toHaveLength(1)
+  expect(result.pages[0].items).toHaveLength(2)
+  expect(result.pages[0].usedHeightCm).toBeCloseTo(4)
+  expect(validateLayout(result.pages, 5, 4, 0)).toEqual([])
+})
+
 it('encaixa uma peça indivisível na diagonal que 0°/90° rejeitam', () => {
   const images = [image('faixa', 10, 1)]
   const baseline = packImages(images, 8, 8, 0.3)
@@ -174,3 +186,4 @@ it('testa a última posição da folha quando o vão só cabe fora dos passos de
   expect(result.pages[0].usedHeightCm).toBeCloseTo(4)
   expect(validateLayout(result.pages, 10, 4, 0)).toEqual([])
 })
+

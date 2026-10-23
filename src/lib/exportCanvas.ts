@@ -3,6 +3,7 @@ import { planUsefulExport } from './exportPlan'
 import { encodeRgbaPng } from './pngWriter'
 import { rotatedAabbCm } from './geometry'
 import { validateLayout } from './layoutValidation'
+import { packingHeightLimitCm } from './sheetDimensions'
 import type { PackedPage, PlacedItem } from '@/types'
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -83,7 +84,7 @@ export async function downloadGangSheets(
 ) {
   const nonEmptyPages = pages.filter((page) => page.items.length > 0)
   if (nonEmptyPages.length === 0) return []
-  const issues = validateLayout(nonEmptyPages, canvasWidthCm, maxHeightCm, itemGapCm)
+  const issues = validateLayout(nonEmptyPages, canvasWidthCm, packingHeightLimitCm(maxHeightCm), itemGapCm)
   const outside = issues.find((issue) => issue.type === 'outside-sheet')
   if (outside) throw new Error(`${outside.message} Mova a arte para dentro da folha para evitar cortes no arquivo.`)
   // Cutting-space/box intersections are advisory. The user's manual layout
@@ -125,3 +126,4 @@ function triggerDownload(blob: Blob, filename: string) {
   document.body.removeChild(link)
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
+

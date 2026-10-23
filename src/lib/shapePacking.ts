@@ -42,19 +42,43 @@ function occupiedWords(shape: Shape): Uint32Array {
   return order
 }
 
-// Compare 32 occupied cells at once, rather than one alpha pixel at a time.
-function fits(page: GridPage, shape: Shape, x: number, y: number, budget: Budget): boolean {
-  if (--budget.left < 0) return false
-  if (y >= page.reservedBottomRow) return true
+// Return a safe horizontal jump after a collision. The same occupied source
+// cell keeps colliding until it clears this contiguous run on the sheet. This
+// skips only impossible positions, unlike a fixed 3 mm sampling step.
+function collisionShift(page: GridPage, shape: Shape, x: number, y: number, budget: Budget): number {
+  if (--budget.left < 0) return -1
+  if (y >= page.reservedBottomRow) return 0
   const wordX = x >>> 5, shift = x & 31
+  const jumpPast = (base: number, overlap: number): number => {
+    const bit = 31 - Math.clz32(overlap & -overlap)
+    let word = base % page.stride, end = bit
+    while (word < page.stride) {
+      const occupied = page.words[base - base % page.stride + word] >>> end
+      const empty = (~occupied) >>> 0
+      const run = empty ? 31 - Math.clz32(empty & -empty) : 32
+      const available = 32 - end
+      if (run < available) return (word - base % page.stride) * 32 + end + run - bit
+      word++
+      end = 0
+    }
+    return (page.stride - base % page.stride) * 32 - bit
+  }
   for (const index of occupiedWords(shape)) {
-    if (--budget.left < 0) return false
+    if (--budget.left < 0) return -1
     const row = Math.floor(index / shape.stride), w = index % shape.stride
     const base = (y + row) * page.stride + wordX + w, bits = shape.words[index]
-    if (page.words[base] & (bits << shift)) return false
-    if (shift && wordX + w + 1 < page.stride && page.words[base + 1] & (bits >>> (32 - shift))) return false
+    const overlap = page.words[base] & (bits << shift)
+    if (overlap) return jumpPast(base, overlap)
+    if (shift && wordX + w + 1 < page.stride) {
+      const overflow = page.words[base + 1] & (bits >>> (32 - shift))
+      if (overflow) return jumpPast(base + 1, overflow)
+    }
   }
-  return true
+  return 0
+}
+
+function fits(page: GridPage, shape: Shape, x: number, y: number, budget: Budget): boolean {
+  return collisionShift(page, shape, x, y, budget) === 0
 }
 
 function stamp(page: GridPage, shape: Shape, x: number, y: number, neighbors: Array<[number, number]>) {
@@ -119,7 +143,7 @@ function anglesFor(item: PlacedItem, width: number, height: number): number[] {
 function findFit(page: GridPage, item: PlacedItem, width: number, height: number, budget: Budget, angular: boolean,
   preferredAngle?: number): Fit | null {
   let best: Fit | null = null
-  const testAngle = (angle: number, step: number) => {
+  const testAngle = (angle: number) => {
     const box = rotatedAabbCm(item.widthCm, item.heightCm, angle)
     const maxX = Math.floor((width - box.wCm + 1e-8) / CELL_CM)
     const maxY = Math.floor((height - box.hCm + 1e-8) / CELL_CM)
@@ -134,7 +158,7 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
       .filter(x => x >= 0 && x <= maxX)
     if (page.items.length) for (const x of anchors) {
       const limitY = Math.min(maxY, Math.floor(item.yCm / CELL_CM))
-      for (let y = 0; y <= limitY && budget.left > 0; y += 3) {
+      for (let y = 0; y <= limitY && budget.left > 0; y++) {
         const gy = Math.min(y, limitY)
         if (fits(page, shape, x, gy, budget)) {
           if (foundY < 0 || gy < foundY || (gy === foundY && x < foundX)) { foundY = gy; foundX = x }
@@ -143,28 +167,19 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
       }
     }
     const lastY = Math.min(maxY, best ? Math.floor((best.bottom - box.hCm + 1e-8) / CELL_CM) : maxY)
-    // First place an empty page at the origin. On populated pages search the
-    // whole width, including cavities, then refine to a one-millimetre grid.
-    const anchoredY = foundY
+    // Search every millimetre, including narrow internal cavities. Collision
+    // runs let us jump horizontally without skipping a single possible fit.
+    const limitY = foundY >= 0 ? Math.min(lastY, foundY) : lastY
     let scannedFit = false
-    for (let y = 0; !scannedFit && budget.left > 0; y += step) {
-      const scanY = Math.min(y, anchoredY >= 0 ? Math.min(lastY, anchoredY) : lastY)
-      for (let x = 0; budget.left > 0; x += step) {
-        const scanX = Math.min(x, maxX)
-        if (fits(page, shape, scanX, scanY, budget)) { foundY = scanY; foundX = scanX; scannedFit = true; break }
-        if (x >= maxX) break
+    for (let y = 0; y <= limitY && !scannedFit && budget.left > 0; y++) {
+      for (let x = 0; x <= maxX && budget.left > 0;) {
+        const jump = collisionShift(page, shape, x, y, budget)
+        if (jump === 0) { foundY = y; foundX = x; scannedFit = true; break }
+        if (jump < 0) break
+        x += jump
       }
-      if (y >= (anchoredY >= 0 ? Math.min(lastY, anchoredY) : lastY)) break
     }
     if (foundY < 0) return
-    if (step > 1) {
-      let refined = false
-      for (let y = Math.max(0, foundY - step + 1); y <= foundY && !refined && budget.left > 0; y++) {
-        for (let x = 0; x <= maxX && budget.left > 0; x++) {
-          if (fits(page, shape, x, y, budget)) { foundY = y; foundX = x; refined = true; break }
-        }
-      }
-    }
     const bottom = foundY * CELL_CM + box.hCm
     if (!best || bottom < best.bottom - 1e-8 || (Math.abs(bottom - best.bottom) < 1e-8 && foundX < best.x))
       best = { page, x: foundX, y: foundY, angle, shape, bottom }
@@ -176,7 +191,7 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
     angles.unshift(preferredAngle)
   }
   for (const angle of angles) {
-    testAngle(angle, page.items.length ? 3 : 1)
+    testAngle(angle)
     const current = best as Fit | null
     // An orthogonal fit inside the already used length adds no film. Search
     // other angles when a piece would otherwise extend or open another sheet.
@@ -186,7 +201,7 @@ function findFit(page: GridPage, item: PlacedItem, width: number, height: number
   // Refine the winning angular region; manual rotation remains continuous.
   const coarse = best as Fit | null
   if (angular && coarse && page.items.length) for (let delta = -14; delta <= 14 && budget.left > 0; delta++) {
-    if (delta) testAngle((coarse.angle + delta + 360) % 360, 3)
+    if (delta) testAngle((coarse.angle + delta + 360) % 360)
   }
   return best
 }
@@ -408,3 +423,4 @@ export function packImagesByShape(images: GangImage[], baseline: PackingResult, 
   onProgress?.(total, total)
   return winner
 }
+

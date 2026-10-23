@@ -6,6 +6,7 @@ import { useGangSheetStore } from '@/store/useGangSheetStore'
 import { DISPLAY_PX_PER_CM, ZOOM_MAX, ZOOM_MIN } from '@/lib/constants'
 import { dropPlacement, findPageSpace, type ArtDrag } from '@/lib/pageEditing'
 import { rotatedAabbCm } from '@/lib/geometry'
+import { pageWorkspaceHeightCm } from '@/lib/sheetDimensions'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import Ruler from './Ruler'
@@ -66,7 +67,9 @@ export default function CanvasWorkspace() {
       const pageIndex = Number(sheet.dataset.sheetPage)
       if (pageIndex === moving.pageIndex) continue
       const rect = (sheet.querySelector('canvas.upper-canvas') ?? sheet).getBoundingClientRect()
-      const position = dropPlacement(item, moving, rect, state.canvasWidthCm, state.maxHeightCm)
+      const page = state.pages.find(page => page.index === pageIndex)
+      if (!page) continue
+      const position = dropPlacement(item, moving, rect, state.canvasWidthCm, pageWorkspaceHeightCm(page, state.maxHeightCm))
       if (position) return { pageIndex, item, position }
     }
     return null
@@ -109,7 +112,7 @@ export default function CanvasWorkspace() {
     const item = state.pages.find(page => page.index === selection.pageIndex)?.items.find(item => item.id === selection.itemId)
     const target = state.pages.find(page => page.index === targetPageIndex)
     if (!item || !target) return
-    const position = findPageSpace(item, target.items, state.canvasWidthCm, state.maxHeightCm, state.itemGapCm)
+    const position = findPageSpace(item, target.items, state.canvasWidthCm, pageWorkspaceHeightCm(target, state.maxHeightCm), state.itemGapCm)
     if (!position) {
       toast({ title: 'Sem espaço livre nesta folha', description: 'Crie uma nova folha ou arraste a arte para a posição desejada.' })
       return
@@ -285,7 +288,7 @@ export default function CanvasWorkspace() {
             className="mx-auto flex w-fit min-w-full flex-col items-center gap-10 p-8 md:px-16"
           >
             {visiblePages.map((page) => {
-              const sheetHeightCm = maxHeightCm
+              const sheetHeightCm = pageWorkspaceHeightCm(page, maxHeightCm)
               const consumption = calculateConsumption([page], canvasWidthCm, costPerMeter)
               const eff = consumption.efficiency / 100
               const effVariant = eff >= 0.7 ? 'success' : eff >= 0.4 ? 'secondary' : 'warning'
@@ -352,3 +355,4 @@ export default function CanvasWorkspace() {
     </main>
   )
 }
+
