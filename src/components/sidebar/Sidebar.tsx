@@ -13,6 +13,7 @@ import { toast } from '@/hooks/use-toast'
 import { useMemo, useState } from 'react'
 import { validateLayout } from '@/lib/layoutValidation'
 import { exportDpi } from '@/lib/exportPlan'
+import { MAX_AUTO_EXTENSION_CM, packingHeightLimitCm, pageWorkspaceHeightCm } from '@/lib/sheetDimensions'
 
 interface SidebarProps {
   onClose?: () => void
@@ -38,7 +39,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
   const reset = useGangSheetStore((s) => s.reset)
   const [isExporting, setIsExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
-  const layoutIssues = useMemo(() => validateLayout(pages, canvasWidthCm, maxHeightCm, itemGapCm),
+  const layoutIssues = useMemo(() => validateLayout(pages, canvasWidthCm, packingHeightLimitCm(maxHeightCm), itemGapCm),
     [pages, canvasWidthCm, maxHeightCm, itemGapCm])
 
   const hasLayout = pages.some((p) => p.items.length > 0)
@@ -64,7 +65,9 @@ export default function Sidebar({ onClose }: SidebarProps) {
     } else {
       const current = useGangSheetStore.getState()
       const count = current.pages.filter((page) => page.items.length > 0).length
-      toast({ title: 'Folha otimizada', description: `${count} página(s) gerada(s) com encaixe inteligente.` })
+      const extended = current.pages.filter(page => pageWorkspaceHeightCm(page, current.maxHeightCm) > current.maxHeightCm)
+      const extra = extended.length ? ` Extensão usada em ${extended.length} folha(s), até ${Math.max(...extended.map(page => pageWorkspaceHeightCm(page, current.maxHeightCm))).toFixed(1)} cm.` : ''
+      toast({ title: 'Folha otimizada', description: `${count} página(s) gerada(s) com encaixe por contorno.${extra}` })
     }
     onClose?.()
   }
@@ -143,7 +146,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
                 />
               </div>
               <div className="space-y-0.5">
-                <Label htmlFor="max-height">Área de trabalho (cm)</Label>
+                <Label htmlFor="max-height">Comprimento (cm)</Label>
                 <Input
                   id="max-height"
                   type="number"
@@ -183,6 +186,8 @@ export default function Sidebar({ onClose }: SidebarProps) {
               </div>
             </div>
             <p className="text-[10px] leading-relaxed text-muted-foreground">Área disponível: {canvasWidthCm} × {maxHeightCm} cm. O custo considera somente o comprimento ocupado, incluindo espaços e margem final de 0,1 cm.</p>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">Ao otimizar, pode usar até {MAX_AUTO_EXTENSION_CM} cm extras por folha se economizar filme. O comprimento e o custo reais aparecem na montagem.</p>
+            <p className="text-[10px] leading-relaxed text-muted-foreground">O encaixe respeita todas as cores visíveis, inclusive branco, e aproveita os vãos transparentes entre os contornos.</p>
             <p className="text-[10px] text-muted-foreground">O PNG baixa somente a área útil, com fundo transparente e a margem final de corte.</p>
           </div>
         </div>
@@ -277,3 +282,4 @@ export default function Sidebar({ onClose }: SidebarProps) {
     </aside>
   )
 }
+

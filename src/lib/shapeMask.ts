@@ -79,6 +79,7 @@ export interface Shape {
 
 type Point = [number, number]
 const shapeCache = new WeakMap<OccupancyMask, Map<string, Shape>>()
+const opaqueShapeCache = new Map<string, Shape>()
 
 function clipAtY(points: Point[], edge: number, above: boolean): Point[] {
   const result: Point[] = []
@@ -101,7 +102,7 @@ function clipAtY(points: Point[], edge: number, above: boolean): Point[] {
 export function shapeFor(mask: OccupancyMask | undefined, widthCm: number, heightCm: number, angle: number): Shape {
   const rotation = ((angle % 360) + 360) % 360
   const key = `${widthCm}/${heightCm}/${rotation}`
-  const cached = mask && shapeCache.get(mask)?.get(key)
+  const cached = mask ? shapeCache.get(mask)?.get(key) : opaqueShapeCache.get(key)
   if (cached) return cached
   const box = rotatedAabbCm(widthCm, heightCm, rotation)
   const cols = Math.max(1, Math.ceil(box.wCm / CELL_CM - 1e-9))
@@ -138,8 +139,11 @@ export function shapeFor(mask: OccupancyMask | undefined, widthCm: number, heigh
   if (mask) {
     let cache = shapeCache.get(mask)
     if (!cache) { cache = new Map(); shapeCache.set(mask, cache) }
-    if (cache.size >= 48) cache.delete(cache.keys().next().value!)
+    if (cache.size >= 256) cache.delete(cache.keys().next().value!)
     cache.set(key, shape)
+  } else {
+    if (opaqueShapeCache.size >= 128) opaqueShapeCache.delete(opaqueShapeCache.keys().next().value!)
+    opaqueShapeCache.set(key, shape)
   }
   return shape
 }
@@ -176,3 +180,4 @@ export function clearanceOffsets(gapCm: number): Array<[number, number]> {
   }
   return offsets
 }
+

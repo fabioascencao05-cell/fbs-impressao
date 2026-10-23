@@ -7,6 +7,7 @@ import { readOccupancyMask } from '@/lib/shapeMask'
 import { readImageResolutionDpi } from '@/lib/imageResolution'
 import { defaultPrintWidthCm } from '@/lib/printQuality'
 import { clampPlacement } from '@/lib/pageEditing'
+import { pageWorkspaceHeightCm } from '@/lib/sheetDimensions'
 import {
   DEFAULT_CANVAS_WIDTH_CM,
   DEFAULT_ITEM_GAP_CM,
@@ -316,7 +317,8 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
     const state = get()
     const item = state.pages.find(page => page.index === pageIndex)?.items.find(item => item.id === itemId)
     if (!item || pageIndex === targetPageIndex || !state.pages.some(page => page.index === targetPageIndex)) return false
-    const position = clampPlacement(item, xCm, yCm, state.canvasWidthCm, state.maxHeightCm)
+    const target = state.pages.find(page => page.index === targetPageIndex)!
+    const position = clampPlacement(item, xCm, yCm, state.canvasWidthCm, pageWorkspaceHeightCm(target, state.maxHeightCm))
     if (!position) return false
     get().cancelPacking()
     set({ pages: state.pages.map(page => {
@@ -387,3 +389,4 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
   ;(window as unknown as { __gangStore?: typeof useGangSheetStore }).__gangStore =
     useGangSheetStore
 }
+

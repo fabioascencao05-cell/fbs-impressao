@@ -52,4 +52,6 @@ export interface PackedPage {
   index: number
   items: PlacedItem[]
   usedHeightCm: number
+  autoExtended?: boolean
 }
+
