@@ -27,7 +27,7 @@ interface GangSheetState {
   canvasWidthCm: number
   itemGapCm: number
   pages: PackedPage[]
-  unplacedImages: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
+  unplacedImages: ReturnType<typeof packImages>['unplaced']
   packingStrategy: string | null
   packingError: string | null
   packingProgress: { done: number; total: number } | null
@@ -235,7 +235,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
 
   generateLayout: () => {
     stopWorker()
-    const { images, maxHeightCm, canvasWidthCm, itemGapCm, pages } = get()
+    const { images, maxHeightCm, canvasWidthCm, itemGapCm, pages, unplacedImages } = get()
     if (!images.length) { set(clearedLayout()); return Promise.resolve(false) }
     set({ packingProgress: { done: 0, total: 1 }, packingError: null })
     return new Promise<boolean>((resolve, reject) => {
@@ -275,7 +275,7 @@ export const useGangSheetStore = create<GangSheetState>((set, get) => ({
       // Files are only decoded on upload. The worker needs geometry and alpha,
       // not another structured clone of every original image file.
       try {
-        worker.postMessage({ images: images.map(image => ({ ...image, file: undefined })), maxHeightCm, canvasWidthCm, itemGapCm, currentPages: pages })
+        worker.postMessage({ images: images.map(image => ({ ...image, file: undefined })), maxHeightCm, canvasWidthCm, itemGapCm, currentPages: pages, currentUnplaced: unplacedImages })
       } catch (error) {
         activeResolve = null
         stopWorker()

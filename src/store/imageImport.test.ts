@@ -44,7 +44,7 @@ it('sem DPI informado usa a sugestão de 300 DPI; um arquivo recusado não alter
   await state.addImages([new File(['no metadata'], 'art.webp', { type: 'image/webp' })])
   const images = useGangSheetStore.getState().images
   expect(images[0].sourceDpi).toBeUndefined()
-  expect(images[0].widthCm).toBe(8.4)
+  expect(images[0].widthCm).toBeCloseTo(8.4666666667, 9)
   expect(await state.addImages([new File(['text'], 'invalid.txt', { type: 'text/plain' })])).toEqual({ added: 0, skipped: 1 })
   expect(useGangSheetStore.getState().images).toBe(images)
 })

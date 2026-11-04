@@ -302,6 +302,18 @@ describe('recálculo automático do consumo', () => {
     expect(totals().lengthCm).toBeCloseTo(60.7)
   })
 
+  it('envia ao otimizador as medidas individuais e as cópias pendentes editadas', async () => {
+    const pages = [{ index: 0, items: [{ ...placed('art-0', 'art', 0), widthCm: 15, heightCm: 15 }], usedHeightCm: 15 }]
+    const pending = [{ sourceImageId: 'art', itemId: 'art-1', widthCm: 90, heightCm: 90 }]
+    useGangSheetStore.setState({ images: [{ ...sourceImage('art'), quantity: 2 }], pages, unplacedImages: pending })
+    const task = useGangSheetStore.getState().generateLayout()
+    expect(FakeWorker.latest.input).toMatchObject({ currentPages: pages, currentUnplaced: pending })
+    FakeWorker.latest.emit({ type: 'result', result: { pages, unplaced: pending, strategy: 'teste' } })
+    expect(await task).toBe(true)
+    expect(useGangSheetStore.getState().unplacedImages).toEqual(pending)
+    expect(useGangSheetStore.getState().pages[0].items[0].widthCm).toBe(15)
+  })
+
   it('mover, redimensionar, girar, duplicar e remover recalcula a montagem atual', () => {
     useGangSheetStore.setState({ pages: [{ index: 0, items: [placed('art-0', 'art', 0)], usedHeightCm: 10 }] })
     const store = useGangSheetStore.getState()
