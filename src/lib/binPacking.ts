@@ -41,7 +41,7 @@ interface Candidate {
 export interface PackingResult {
   pages: PackedPage[]
   /** Arts that cannot physically fit on a blank page at their chosen size. */
-  unplaced: Array<{ sourceImageId: string; widthCm: number; heightCm: number }>
+  unplaced: Array<{ sourceImageId: string; widthCm: number; heightCm: number; itemId?: string }>
   /** Human-readable diagnostic that makes packing decisions debuggable. */
   strategy: string
 }

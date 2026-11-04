@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { defaultPrintWidthCm, effectivePrintDpi, isPrintReadyDpi, minimumEffectivePrintDpi } from './printQuality'
 
 describe('qualidade de impressão', () => {
-  it('não amplia silenciosamente a arte ao sugerir o tamanho de 300 DPI', () => {
+  it('preserva a medida exata a 300 DPI sem arredondar a arte para baixo', () => {
     const widthCm = defaultPrintWidthCm(1_000)
-    expect(widthCm).toBe(8.4)
-    expect(effectivePrintDpi(1_000, widthCm)).toBeGreaterThanOrEqual(300)
+    expect(widthCm).toBeCloseTo(8.4666666667, 9)
+    expect(effectivePrintDpi(1_000, widthCm)).toBeCloseTo(300, 9)
   })
 
   it('só classifica como pronta quando a fonte realmente alcança 300 DPI', () => {

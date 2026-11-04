@@ -6,6 +6,7 @@ import { packingScore } from './packingScore'
 import { validateLayout } from './layoutValidation'
 import { packingHeightLimitCm } from './sheetDimensions'
 import { EXPORT_END_MARGIN_CM } from './constants'
+import { prepareRepackInput } from './repackInput'
 
 function improves(candidate: PackingResult, baseline: PackingResult): boolean {
   const a = packingScore(candidate), b = packingScore(baseline)
@@ -41,7 +42,11 @@ export function keepEconomicalLayout(images: GangImage[], pages: PackedPage[], r
 }
 
 export function optimizeLayout(images: GangImage[], height: number, width: number, gap: number,
-  currentPages: PackedPage[] = [], onProgress?: (done: number, total: number) => void): PackingResult {
+  currentPages: PackedPage[] = [], onProgress?: (done: number, total: number) => void,
+  currentUnplaced: PackingResult['unplaced'] = []): PackingResult {
+  const input = prepareRepackInput(images, currentPages, currentUnplaced)
+  images = input.images
+  currentPages = input.pages
   const limit = packingHeightLimitCm(height)
   let reported = 0
   const progress = (stage: number) => (done: number, total: number) => {
@@ -62,7 +67,7 @@ export function optimizeLayout(images: GangImage[], height: number, width: numbe
     if (improves(candidate, result) && !validateLayout(candidate.pages, width, limit, gap).length) result = candidate
   }
   onProgress?.(2000, 2000)
-  return { ...result, pages: result.pages.map(page => ({ ...page,
-    autoExtended: page.usedHeightCm + EXPORT_END_MARGIN_CM > height + 1e-6 })) }
+  return input.restore({ ...result, pages: result.pages.map(page => ({ ...page,
+    autoExtended: page.usedHeightCm + EXPORT_END_MARGIN_CM > height + 1e-6 })) })
 }
 
